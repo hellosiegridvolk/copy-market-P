@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+.git
+*.md
+docs
+asset
+coverage
+simulation_results
+trader_data_cache
+logs
+data
+.github

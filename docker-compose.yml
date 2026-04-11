@@ -1,0 +1,12 @@
+services:
+  bot:
+    image: neosun/copy-market:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "0.0.0.0:3000:3000"
+    volumes:
+      - bot_data:/app/data
+
+volumes:
+  bot_data:
