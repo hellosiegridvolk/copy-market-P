@@ -1,3 +1,12 @@
+export type TradeLifecycleStatus =
+    | 'new'
+    | 'processing'
+    | 'executed'
+    | 'skipped'
+    | 'failed'
+    | 'retry_exhausted'
+    | 'partial_fill';
+
 export interface UserActivityInterface {
     _id?: string;
     proxyWallet: string;
@@ -24,6 +33,23 @@ export interface UserActivityInterface {
     bot: boolean;
     botExcutedTime: number;
     myBoughtSize?: number;
+    status?: TradeLifecycleStatus;
+    retryCount?: number;
+    lastError?: string | null;
+    lastAttemptAt?: number | null;
+    executedAt?: number | null;
+    orderId?: string | null;
+    orderStatus?: string | null;
+    orderResult?: Record<string, unknown> | null;
+    tokenId?: string | null;
+    marketSlug?: string | null;
+    sizeRequested?: number | null;
+    sizeExecuted?: number | null;
+    detectedAt?: number | null;
+    sourceTrader?: string | null;
+    sourceTradeId?: string | null;
+    aggregated?: boolean;
+    aggregatedTradeCount?: number;
 }
 
 export interface UserPositionInterface {

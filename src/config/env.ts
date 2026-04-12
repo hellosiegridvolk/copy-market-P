@@ -9,6 +9,10 @@ const isValidEthereumAddress = (address: string): boolean => {
     return /^0x[a-fA-F0-9]{40}$/.test(address);
 };
 
+const isValidPrivateKey = (value: string): boolean => {
+    return /^[0-9a-fA-F]{64}$/.test(value);
+};
+
 /**
  * Validate required environment variables
  */
@@ -73,6 +77,12 @@ const validateAddresses = (): void => {
             `Invalid USDC_CONTRACT_ADDRESS format: ${process.env.USDC_CONTRACT_ADDRESS}`
         );
     }
+
+    if (process.env.PRIVATE_KEY && !isValidPrivateKey(process.env.PRIVATE_KEY)) {
+        throw new Error(
+            'Invalid PRIVATE_KEY. Expected exactly 64 hexadecimal characters without 0x.'
+        );
+    }
 };
 
 /**
@@ -123,6 +133,67 @@ const validateNumericConfig = (): void => {
     const dailyLossCap = parseFloat(process.env.DAILY_LOSS_CAP_PCT || '20');
     if (isNaN(dailyLossCap) || dailyLossCap <= 0 || dailyLossCap > 100) {
         throw new Error(`Invalid DAILY_LOSS_CAP_PCT: ${process.env.DAILY_LOSS_CAP_PCT}. Must be > 0 and <= 100.`);
+    }
+
+    const slippageTolerance = parseFloat(process.env.SLIPPAGE_TOLERANCE || '0.05');
+    if (isNaN(slippageTolerance) || slippageTolerance < 0 || slippageTolerance > 1) {
+        throw new Error(
+            `Invalid SLIPPAGE_TOLERANCE: ${process.env.SLIPPAGE_TOLERANCE}. Must be between 0 and 1.`
+        );
+    }
+
+    const copySize = parseFloat(process.env.COPY_SIZE || '10.0');
+    if (isNaN(copySize) || copySize <= 0) {
+        throw new Error(`Invalid COPY_SIZE: ${process.env.COPY_SIZE}. Must be greater than 0.`);
+    }
+
+    const minOrderSizeUsd = parseFloat(process.env.MIN_ORDER_SIZE_USD || '1.0');
+    const maxOrderSizeUsd = parseFloat(process.env.MAX_ORDER_SIZE_USD || '100.0');
+    if (isNaN(minOrderSizeUsd) || minOrderSizeUsd <= 0) {
+        throw new Error(
+            `Invalid MIN_ORDER_SIZE_USD: ${process.env.MIN_ORDER_SIZE_USD}. Must be greater than 0.`
+        );
+    }
+
+    if (isNaN(maxOrderSizeUsd) || maxOrderSizeUsd < minOrderSizeUsd) {
+        throw new Error(
+            `Invalid MAX_ORDER_SIZE_USD: ${process.env.MAX_ORDER_SIZE_USD}. Must be greater than or equal to MIN_ORDER_SIZE_USD.`
+        );
+    }
+
+    if (process.env.MAX_POSITION_SIZE_USD) {
+        const maxPositionSizeUsd = parseFloat(process.env.MAX_POSITION_SIZE_USD);
+        if (isNaN(maxPositionSizeUsd) || maxPositionSizeUsd <= 0) {
+            throw new Error(
+                `Invalid MAX_POSITION_SIZE_USD: ${process.env.MAX_POSITION_SIZE_USD}. Must be greater than 0 when set.`
+            );
+        }
+    }
+
+    if (process.env.MAX_DAILY_VOLUME_USD) {
+        const maxDailyVolumeUsd = parseFloat(process.env.MAX_DAILY_VOLUME_USD);
+        if (isNaN(maxDailyVolumeUsd) || maxDailyVolumeUsd <= 0) {
+            throw new Error(
+                `Invalid MAX_DAILY_VOLUME_USD: ${process.env.MAX_DAILY_VOLUME_USD}. Must be greater than 0 when set.`
+            );
+        }
+    }
+
+    const killSwitchMaxErrors = parseInt(process.env.KILL_SWITCH_MAX_ERRORS || '5', 10);
+    if (isNaN(killSwitchMaxErrors) || killSwitchMaxErrors < 1 || killSwitchMaxErrors > 100) {
+        throw new Error(
+            `Invalid KILL_SWITCH_MAX_ERRORS: ${process.env.KILL_SWITCH_MAX_ERRORS}. Must be between 1 and 100.`
+        );
+    }
+
+    const aggregationWindowSeconds = parseInt(
+        process.env.TRADE_AGGREGATION_WINDOW_SECONDS || '300',
+        10
+    );
+    if (isNaN(aggregationWindowSeconds) || aggregationWindowSeconds < 1) {
+        throw new Error(
+            `Invalid TRADE_AGGREGATION_WINDOW_SECONDS: ${process.env.TRADE_AGGREGATION_WINDOW_SECONDS}. Must be a positive integer.`
+        );
     }
 };
 

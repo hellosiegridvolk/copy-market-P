@@ -1,6 +1,5 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import chalk from 'chalk';
 
 const DB_DIR = path.join(process.cwd(), 'data');
 
@@ -13,15 +12,15 @@ const ensureDbDir = () => {
 const connectDB = async () => {
     try {
         ensureDbDir();
-        console.log(chalk.green('✓'), `NeDB initialized (${DB_DIR})`);
+        console.log('✓', `NeDB initialized (${DB_DIR})`);
     } catch (error) {
-        console.log(chalk.red('✗'), 'NeDB initialization failed:', error);
+        console.log('✗', 'NeDB initialization failed:', error);
         process.exit(1);
     }
 };
 
 export const closeDB = async (): Promise<void> => {
-    console.log(chalk.green('✓'), 'Database closed');
+    console.log('✓', 'Database closed');
 };
 
 export const getDbDir = () => DB_DIR;
