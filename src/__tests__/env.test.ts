@@ -1,6 +1,3 @@
-// env.ts 在 import 时立即执行校验，所以每个测试需要隔离的 process.env
-// 我们通过 jest.isolateModules 来实现
-
 describe('env.ts configuration', () => {
     const baseEnv = {
         USER_ADDRESSES: '0x1234567890abcdef1234567890abcdef12345678',
@@ -12,28 +9,41 @@ describe('env.ts configuration', () => {
         USDC_CONTRACT_ADDRESS: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
     };
 
+    const resetEnv = () => {
+        for (const key of [
+            ...Object.keys(baseEnv),
+            'FETCH_INTERVAL',
+            'RETRY_LIMIT',
+            'TOO_OLD_TIMESTAMP',
+            'COPY_STRATEGY',
+            'COPY_SIZE',
+            'TRADE_MULTIPLIER',
+            'COPY_PERCENTAGE',
+            'TRADE_AGGREGATION_ENABLED',
+            'TRADE_AGGREGATION_WINDOW_SECONDS',
+            'REQUEST_TIMEOUT_MS',
+            'NETWORK_RETRY_LIMIT',
+            'MAX_ORDER_SIZE_USD',
+            'MIN_ORDER_SIZE_USD',
+            'PREVIEW_MODE',
+        ]) {
+            delete process.env[key];
+        }
+    };
+
     beforeEach(() => {
         jest.resetModules();
-        // Clear all env vars
-        for (const key of Object.keys(process.env)) {
-            if (baseEnv[key as keyof typeof baseEnv] !== undefined) {
-                delete process.env[key];
-            }
-        }
+        jest.doMock('dotenv', () => ({ config: jest.fn() }));
+        resetEnv();
     });
 
     afterEach(() => {
-        // Restore
-        for (const key of Object.keys(baseEnv)) {
-            delete process.env[key];
-        }
+        jest.dontMock('dotenv');
+        resetEnv();
     });
 
     const loadEnv = (overrides: Record<string, string> = {}) => {
-        // Clean slate: remove all test-related env vars
-        for (const key of ['FETCH_INTERVAL', 'RETRY_LIMIT', 'TOO_OLD_TIMESTAMP', 'COPY_STRATEGY', 'COPY_SIZE', 'TRADE_MULTIPLIER', 'COPY_PERCENTAGE', 'TRADE_AGGREGATION_ENABLED', 'TRADE_AGGREGATION_WINDOW_SECONDS', 'REQUEST_TIMEOUT_MS', 'NETWORK_RETRY_LIMIT', 'MAX_ORDER_SIZE_USD', 'MIN_ORDER_SIZE_USD']) {
-            delete process.env[key];
-        }
+        resetEnv();
         Object.assign(process.env, baseEnv, overrides);
         let ENV: any;
         jest.isolateModules(() => {
@@ -49,7 +59,8 @@ describe('env.ts configuration', () => {
 
     test('parses comma-separated addresses', () => {
         const env = loadEnv({
-            USER_ADDRESSES: '0x1234567890abcdef1234567890abcdef12345678, 0xabcdef1234567890abcdef1234567890abcdef12',
+            USER_ADDRESSES:
+                '0x1234567890abcdef1234567890abcdef12345678, 0xabcdef1234567890abcdef1234567890abcdef12',
         });
         expect(env.USER_ADDRESSES).toHaveLength(2);
     });
@@ -64,10 +75,27 @@ describe('env.ts configuration', () => {
     test('throws on missing required vars', () => {
         expect(() => {
             jest.isolateModules(() => {
-                // Don't set any env vars
                 require('../config/env');
             });
         }).toThrow('Missing required environment variables');
+    });
+
+    test('allows preview mode without a private key', () => {
+        const env = loadEnv({
+            PREVIEW_MODE: 'true',
+            PRIVATE_KEY: '',
+        });
+        expect(env.PREVIEW_MODE).toBe(true);
+        expect(env.PROXY_WALLET).toBe(baseEnv.PROXY_WALLET);
+    });
+
+    test('requires a private key in live mode', () => {
+        expect(() =>
+            loadEnv({
+                PREVIEW_MODE: 'false',
+                PRIVATE_KEY: '',
+            })
+        ).toThrow('Missing required environment variables');
     });
 
     test('throws on invalid wallet address', () => {
@@ -75,7 +103,9 @@ describe('env.ts configuration', () => {
     });
 
     test('throws on invalid USER_ADDRESSES', () => {
-        expect(() => loadEnv({ USER_ADDRESSES: 'not-an-address' })).toThrow('Invalid Ethereum address');
+        expect(() => loadEnv({ USER_ADDRESSES: 'not-an-address' })).toThrow(
+            'Invalid Ethereum address'
+        );
     });
 
     test('throws on invalid RPC_URL', () => {
@@ -94,5 +124,6 @@ describe('env.ts configuration', () => {
         expect(env.RETRY_LIMIT).toBe(3);
         expect(env.TOO_OLD_TIMESTAMP).toBe(24);
         expect(env.TRADE_AGGREGATION_ENABLED).toBe(false);
+        expect(env.PREVIEW_MODE).toBe(false);
     });
 });

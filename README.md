@@ -62,13 +62,23 @@ This repository now contains the unpacked application source. The runtime does n
 1. `npm ci`
 2. `npm run setup`
 3. Edit `.env`
+   - leave `PREVIEW_MODE=true` for the first pass
+   - `PRIVATE_KEY` can stay blank in preview mode
 4. `npm run validate:handoff`
 5. `npm run health`
+   - if RPC connectivity fails, refresh `.env` from the current `.env.example` or update `RPC_URL`
 6. `npm start`
 7. Check:
    - `http://localhost:3000/api/health`
    - `http://localhost:3000/api/status`
    - `http://localhost:3000/docs`
+
+### Windows note
+
+- Run the commands from the repository directory, not from `C:\Users\Asus Willy`
+- Paste the PR description into GitHub, not into PowerShell
+- Ignore stray `.env.txt` files and use `.env`
+- For a PowerShell-safe runbook, use `docs/WINDOWS_QUICK_START.md`
 
 ## Runtime API surface
 

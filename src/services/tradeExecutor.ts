@@ -327,7 +327,7 @@ const applyAggregatedSummary = async (
     }
 };
 
-const executeSingleTrade = async (clobClient: ClobClient, trade: TradeWithUser) => {
+const executeSingleTrade = async (clobClient: ClobClient | null, trade: TradeWithUser) => {
     if (killSwitchTriggered || !(await checkDailyLoss())) return;
 
     await persistTradeStatus(trade, 'processing', {
@@ -343,6 +343,11 @@ const executeSingleTrade = async (clobClient: ClobClient, trade: TradeWithUser) 
             lastError: 'preview_mode',
         });
         markExecutionSuccess();
+        return;
+    }
+
+    if (!clobClient) {
+        await handleRetryableExecutionFailure(trade, 'live_client_not_initialized');
         return;
     }
 
@@ -387,13 +392,16 @@ const executeSingleTrade = async (clobClient: ClobClient, trade: TradeWithUser) 
     }
 };
 
-const doTrading = async (clobClient: ClobClient, trades: TradeWithUser[]) => {
+const doTrading = async (clobClient: ClobClient | null, trades: TradeWithUser[]) => {
     for (const trade of trades) {
         await executeSingleTrade(clobClient, trade);
     }
 };
 
-const doAggregatedTrading = async (clobClient: ClobClient, aggregatedTrades: AggregatedTrade[]) => {
+const doAggregatedTrading = async (
+    clobClient: ClobClient | null,
+    aggregatedTrades: AggregatedTrade[]
+) => {
     for (const aggregation of aggregatedTrades) {
         if (killSwitchTriggered || !(await checkDailyLoss())) return;
 
@@ -416,6 +424,13 @@ const doAggregatedTrading = async (clobClient: ClobClient, aggregatedTrades: Agg
                 });
             }
             markExecutionSuccess();
+            continue;
+        }
+
+        if (!clobClient) {
+            for (const trade of aggregation.trades) {
+                await handleRetryableExecutionFailure(trade, 'live_client_not_initialized');
+            }
             continue;
         }
 
@@ -470,7 +485,7 @@ export const stopTradeExecutor = () => {
     updateWorkerStatus('executor', { running: false });
 };
 
-const tradeExecutor = async (clobClient: ClobClient) => {
+const tradeExecutor = async (clobClient: ClobClient | null) => {
     isRunning = true;
     killSwitchTriggered = false;
     consecutiveExecutionErrors = 0;
