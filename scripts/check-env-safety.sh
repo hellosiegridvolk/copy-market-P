@@ -12,10 +12,10 @@ check_file() {
   local file="$1"
   [ -f "$file" ] || return 0
 
-  # Real MongoDB credentials (username:password@cluster pattern)
+  # Real database credentials or connection-string secrets
   if grep -qE 'mongodb\+srv://[a-zA-Z0-9]+:[a-zA-Z0-9]+@[a-z0-9]+\.' "$file" 2>/dev/null; then
     if ! grep -qE '<username>|<password>|YOUR_' "$file" 2>/dev/null; then
-      echo -e "${RED}✗ $file contains real MongoDB credentials${NC}"
+      echo -e "${RED}✗ $file contains real database credentials${NC}"
       FAIL=1
     fi
   fi

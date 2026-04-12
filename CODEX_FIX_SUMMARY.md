@@ -1,52 +1,100 @@
 # CODEX FIX SUMMARY
 
-## 1) Actual files inspected
-- README.md
-- COPY_MARKET_file_by_file_fix_plan.md
-- copy-market-review.md
-- src/models/userHistory.ts
-- src/services/tradeExecutor.ts
-- src/utils/postOrder.ts
-- src/server/index.ts
-- src/scripts/healthCheck.ts
-- src/config/env.ts
-- package.json
-- .env.example
-- docs/QUICK_START.md
-- docs/GETTING_STARTED.md
-- docs/DEPLOYMENT.md
-- src/__tests__/postOrder.test.ts
+## 1. Actual files inspected
 
-## 2) Path mismatches resolved
-- Plan expected `src/models/db.ts`, actual DB wrapper is `src/models/userHistory.ts`.
-- Plan expected monitor path under `src/monitor/*`, actual executor is `src/services/tradeExecutor.ts`.
-- Plan expected post-order path under `src/processor/*`, actual file is `src/utils/postOrder.ts`.
-- API server path uses `src/server/index.ts`.
+- `README.md`
+- `COPY_MARKET_file_by_file_fix_plan.md`
+- `copy-market-review.md`
+- `copy-market-package.zip`
+- `copy-market-docs.zip`
+- `package.json`
+- `.env.example`
+- `src/config/db.ts`
+- `src/config/env.ts`
+- `src/models/userHistory.ts`
+- `src/interfaces/User.ts`
+- `src/services/tradeMonitor.ts`
+- `src/services/tradeExecutor.ts`
+- `src/services/runtimeStatus.ts`
+- `src/utils/postOrder.ts`
+- `src/utils/healthCheck.ts`
+- `src/scripts/healthCheck.ts`
+- `src/server/index.ts`
+- `src/__tests__/dbWrapper.test.ts`
+- `src/__tests__/postOrder.test.ts`
+- `src/__tests__/tradeExecutor.lifecycle.test.ts`
+- `docs/QUICK_START.md`
+- `docs/GETTING_STARTED.md`
+- `docs/DEPLOYMENT.md`
+- `docs/MULTI_TRADER_GUIDE.md`
+- `docs/POSITION_TRACKING.md`
 
-## 3) What was changed
-- DB wrapper: `updateOne` now returns Promise directly; added `updateOneSet`, `setById`, `incById`, `replaceOne`; guarded `updateMany` against non-operator replacements.
-- Executor: added explicit lifecycle writes (`processing`, `executed`, `failed`, `retry_exhausted`, `skipped`, `partial_fill`) with retry/error persistence and idempotency check for executed trades.
-- Post-order persistence: normalized order result helper and status/error/orderId/size persistence with safe setters and retry incrementing.
-- Runtime truthfulness: added `src/services/runtimeStatus.ts` and surfaced runtime heartbeat/error/kill-switch signals in `/api/status`.
-- Scripts: replaced broken setup target with working `src/scripts/setup.js`; added `health`, `swagger`, and `validate:handoff` scripts.
-- Docs/env truthfulness: updated README/docs and simplified `.env.example` to actual NeDB + runtime model.
-- Added core tests for DB wrapper + executor lifecycle, and updated postOrder test mocks for new DB helper shape.
+## 2. Path mismatches resolved
 
-## 4) Remaining blockers
-- Executor loop still relies on in-memory kill-switch counters (no persistent process-wide supervisor state).
-- Existing frontend status card still renders a simplified “running” badge.
-- `swagger` script currently boots server bundle; dedicated OpenAPI generation remains for follow-up.
-- Deeper portfolio-equity kill-switch (beyond available balance) requires broader account valuation integration.
+- The DB bootstrap is `src/config/db.ts`, not `src/models/db.ts`
+- The actual NeDB wrapper and update helpers live in `src/models/userHistory.ts`
+- The trade executor is `src/services/tradeExecutor.ts`, not `src/monitor/tradeExecutor.ts`
+- The post-order persistence path is `src/utils/postOrder.ts`, not `src/processor/postOrder.ts`
+- The API server is `src/server/index.ts`, not `src/api/server.ts`
+- Repository `main` only contained the review docs plus ZIP bundles; the real application source had to be brought into the repo tree from the packaged source before targeted fixes could be made
 
-## 5) Exact local verification commands
-1. `npm install`
-2. `npm run build`
-3. `npm test`
-4. `npm run health`
-5. `npm start`
-6. `curl http://localhost:3000/api/status`
+## 3. What was changed
 
+- Safe DB update semantics:
+  - `updateOne()` now treats plain-object updates as safe `$set` patches
+  - `replaceOne()` remains the explicit escape hatch for full replacement
+  - helper coverage exists for `updateOneSet`, `setById`, and `incById`
+- Trade lifecycle persistence:
+  - new trades are inserted with explicit lifecycle fields
+  - executor persists `status`, `retryCount`, `lastError`, `lastAttemptAt`, `executedAt`, `orderId`, `sizeRequested`, and `sizeExecuted`
+  - retryable executor failures stay retryable until `RETRY_LIMIT`
+  - already executed trades are skipped during reprocessing
+- Post-order normalization:
+  - successful, rejected, and partial-fill order responses are normalized explicitly
+  - partial fills no longer get flattened back into `executed`
+  - aggregated buy batches now fan normalized results back across every underlying trade record
+- Runtime truthfulness:
+  - `/api/status` now reports separate monitor and executor worker state
+  - queue counts are derived from persisted trade records
+  - kill switch state, last success, last error, and worker staleness are surfaced
+  - standalone `swagger` entrypoint now actually starts the server
+- Package and script truthfulness:
+  - `start` now builds before launching the compiled app
+  - `swagger` now builds and launches a real server entrypoint
+  - `validate:handoff` is now a clean build-and-test gate instead of implying env-dependent health validation
+- Docs and env truthfulness:
+  - README and core docs now describe the actual local NeDB architecture
+  - `.env.example` clearly separates preview-first guidance, required settings, and optional tuning
+  - health check script output now uses straightforward PASS/WARN/FAIL language
+- Tests:
+  - DB wrapper safety tests expanded
+  - executor lifecycle tests expanded
+  - post-order persistence tests rewritten around normalized outcomes
 
-## 6) Binary artifact cleanup
-- Removed non-runtime binary files from PR scope: ZIP archives, PNG assets, and PDF docs package to avoid binary-diff PR failures.
-- Added `*.zip` to `.gitignore` to keep uploaded archives out of future handoff PRs.
+## 4. What remains blocked
+
+- No websocket market/user stream or reconciliation layer yet
+- Kill switch is materially better than free-USDC-only, but it still depends on API-sourced balance/position values rather than a dedicated accounting engine
+- `npm run health` still requires a real `.env`; it was not run against live credentials in this branch
+- No live-mode smoke test was executed
+- Some secondary historical docs still need an editorial pass:
+  - `docs/IMPROVEMENTS.md`
+  - `docs/LOGGING_PREVIEW.md`
+  - translated README variants
+
+## 5. Exact local verification commands to run next
+
+1. `npm ci`
+2. `npm run setup`
+3. Edit `.env`
+4. `npm run validate:handoff`
+5. `npm run health`
+6. `npm start`
+7. `curl http://localhost:3000/api/health`
+8. `curl http://localhost:3000/api/status`
+9. Open `http://localhost:3000/docs`
+
+## Verification already performed in this branch
+
+- `npm run build`
+- `npm test -- --runInBand`
