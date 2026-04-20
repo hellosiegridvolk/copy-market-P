@@ -79,6 +79,12 @@ describe('trade executor lifecycle persistence', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         resetRuntimeStatus();
+        updateRuntimeStatus({
+            monitor: {
+                running: true,
+                lastLoopAt: Date.now(),
+            },
+        });
         find.mockReturnValue({ exec: jest.fn().mockResolvedValue([]) });
         fetchData.mockResolvedValue([]);
     });
@@ -246,5 +252,25 @@ describe('trade executor lifecycle persistence', () => {
         expect(postOrder).not.toHaveBeenCalled();
         expect(runtime.killSwitchActive).toBe(true);
         expect(runtime.killSwitchReason).toBe('monitor_worker_stale');
+    });
+
+    test('live mode trips the kill switch when the monitor is not running', async () => {
+        const trade = makeTrade({ _id: 'trade-7' });
+        find.mockReturnValue({ exec: jest.fn().mockResolvedValue([trade]) });
+        updateRuntimeStatus({
+            monitor: {
+                running: false,
+            },
+        });
+
+        const loop = tradeExecutor({} as any);
+        await waitForExecutorCycle();
+        stopTradeExecutor();
+        await loop;
+
+        const runtime = getRuntimeStatus();
+        expect(postOrder).not.toHaveBeenCalled();
+        expect(runtime.killSwitchActive).toBe(true);
+        expect(runtime.killSwitchReason).toBe('monitor_worker_not_running');
     });
 });

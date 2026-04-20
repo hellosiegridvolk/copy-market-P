@@ -324,7 +324,12 @@ const tradeMonitor = async () => {
     updateRiskStatus({
         consecutiveMonitorErrors: 0,
     });
-    updateWorkerStatus('monitor', { running: true, lastError: undefined, lastErrorAt: undefined });
+    updateWorkerStatus('monitor', {
+        running: true,
+        lastLoopAt: Date.now(),
+        lastError: undefined,
+        lastErrorAt: undefined,
+    });
     await init();
     Logger.success(`Monitoring ${USER_ADDRESSES.length} trader(s) every ${FETCH_INTERVAL}s`);
     Logger.separator();

@@ -69,6 +69,8 @@
   - kill switch state, last success, last error, and worker staleness are surfaced
   - runtime risk telemetry now exposes equity source, balance/position snapshots, drawdown percentage, and consecutive error counters
   - degraded live-mode equity snapshots no longer masquerade as trustworthy full-account equity
+  - live mode now refuses to continue if the monitor worker is stopped or never published a heartbeat
+  - `/api/status` now marks stopped workers and missing worker heartbeats as degraded instead of optimistic healthy
   - standalone `swagger` entrypoint now actually starts the server
 - Package and script truthfulness:
   - `start` now builds before launching the compiled app
@@ -94,6 +96,8 @@
   - DB wrapper safety tests expanded
   - env validation tests expanded for preview-mode behavior
   - executor lifecycle tests now cover degraded equity snapshot and stale monitor kill-switch behavior
+  - executor lifecycle tests now cover the monitor-not-running kill-switch path
+  - status route tests now verify that stopped workers and missing heartbeats are surfaced as degraded
   - post-order persistence tests rewritten around normalized outcomes
 
 ## 4. What remains blocked

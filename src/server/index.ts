@@ -167,11 +167,17 @@ app.get('/api/status', (_req, res) => {
     const queue = getQueueCounts(trades);
     const monitorStale = runtime.monitor.running && isWorkerStale(runtime.monitor.lastLoopAt);
     const executorStale = runtime.executor.running && isWorkerStale(runtime.executor.lastLoopAt);
+    const monitorHeartbeatMissing = runtime.monitor.running && !runtime.monitor.lastLoopAt;
+    const executorHeartbeatMissing = runtime.executor.running && !runtime.executor.lastLoopAt;
     const running = runtime.monitor.running || runtime.executor.running;
     const degradedReasons: string[] = [];
 
+    if (!runtime.monitor.running) degradedReasons.push('monitor_stopped');
+    if (!runtime.executor.running) degradedReasons.push('executor_stopped');
     if (monitorStale) degradedReasons.push('monitor_stale');
     if (executorStale) degradedReasons.push('executor_stale');
+    if (monitorHeartbeatMissing) degradedReasons.push('monitor_heartbeat_missing');
+    if (executorHeartbeatMissing) degradedReasons.push('executor_heartbeat_missing');
     if (runtime.risk.consecutiveMonitorErrors > 0) degradedReasons.push('monitor_errors');
     if (runtime.risk.consecutiveExecutionErrors > 0) degradedReasons.push('execution_errors');
     if (runtime.risk.consecutiveEquitySnapshotFailures > 0) {
@@ -184,7 +190,11 @@ app.get('/api/status', (_req, res) => {
         degradedReasons.push('equity_snapshot_incomplete');
     }
 
-    const healthy = running && degradedReasons.length === 0 && !runtime.killSwitchActive;
+    const healthy =
+        runtime.monitor.running &&
+        runtime.executor.running &&
+        degradedReasons.length === 0 &&
+        !runtime.killSwitchActive;
 
     res.json({
         running,
@@ -471,7 +481,7 @@ app.get('/', (_req, res) => {
 
 export const startServer = (port: number = parseInt(process.env.PORT || '3000', 10)) => {
     botStartTime = Date.now();
-    app.listen(port, '0.0.0.0', () => {
+    return app.listen(port, '0.0.0.0', () => {
         console.log(`\nWeb UI:  http://0.0.0.0:${port}`);
         console.log(`Swagger: http://0.0.0.0:${port}/docs`);
         console.log(`API:     http://0.0.0.0:${port}/api/health\n`);

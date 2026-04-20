@@ -245,6 +245,16 @@ const checkMonitorHealth = (): boolean => {
         return false;
     }
 
+    if (!runtime.monitor.running) {
+        setKillSwitch('monitor_worker_not_running');
+        return false;
+    }
+
+    if (!runtime.monitor.lastLoopAt) {
+        setKillSwitch('monitor_worker_no_heartbeat');
+        return false;
+    }
+
     if (runtime.risk.consecutiveMonitorErrors >= MAX_MONITOR_ERRORS) {
         setKillSwitch('too_many_monitor_errors');
         return false;
