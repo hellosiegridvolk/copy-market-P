@@ -16,83 +16,88 @@ const colors = {
 
 function printHeader() {
     console.log(`\n${colors.cyan}${colors.bright}`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('     🏥 POLYMARKET BOT - HEALTH CHECK');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('============================================================');
+    console.log('                     COPY MARKET HEALTH CHECK               ');
+    console.log('============================================================');
     console.log(`${colors.reset}\n`);
 }
 
+function printConfiguration() {
+    console.log(`${colors.cyan}Configuration summary:${colors.reset}\n`);
+    console.log(
+        `  Mode: ${process.env.PREVIEW_MODE === 'true' ? 'preview (no live orders)' : 'live'}`
+    );
+    console.log(`  Trading wallet: ${ENV.PROXY_WALLET.slice(0, 6)}...${ENV.PROXY_WALLET.slice(-4)}`);
+    console.log(`  Tracked traders: ${ENV.USER_ADDRESSES.length}`);
+    console.log(`  Poll interval: ${ENV.FETCH_INTERVAL}s`);
+    console.log(`  Trade multiplier: ${ENV.TRADE_MULTIPLIER}x`);
+    console.log('');
+}
+
 function printRecommendations(result: any) {
-    const issues: string[] = [];
+    const checkValues = Object.values(result.checks) as Array<{ status: string; balance?: number }>;
+    const passCount = checkValues.filter((check) => check.status === 'ok').length;
+    const warnCount = checkValues.filter((check) => check.status === 'warning').length;
+    const failCount = checkValues.filter((check) => check.status === 'error').length;
+
+    console.log(`${colors.cyan}Summary:${colors.reset}`);
+    console.log(`  PASS: ${passCount}`);
+    console.log(`  WARN: ${warnCount}`);
+    console.log(`  FAIL: ${failCount}\n`);
 
     if (result.checks.database.status === 'error') {
-        issues.push('❌ Database Connection Failed');
-        console.log(`${colors.red}${colors.bright}\n📋 Database Issue:${colors.reset}`);
-        console.log('   • Check your DB_DIR in .env file');
-        console.log('   • Verify Data directory permissions');
-        console.log('   • Ensure process can create/write *.db files');
-        console.log('   • Test connection: Check filesystem path in DB_DIR\n');
+        console.log(`${colors.red}${colors.bright}FAIL - Local storage${colors.reset}`);
+        console.log('  - Check DB_DIR in .env');
+        console.log('  - Verify the process can create and write NeDB files');
+        console.log('');
     }
 
     if (result.checks.rpc.status === 'error') {
-        issues.push('❌ RPC Endpoint Failed');
-        console.log(`${colors.red}${colors.bright}\n📋 RPC Issue:${colors.reset}`);
-        console.log('   • Check your RPC_URL in .env file');
-        console.log('   • Verify your API key is valid');
-        console.log('   • Try alternative providers:');
-        console.log('     - Infura: https://infura.io');
-        console.log('     - Alchemy: https://www.alchemy.com\n');
+        console.log(`${colors.red}${colors.bright}FAIL - RPC connectivity${colors.reset}`);
+        console.log('  - Check RPC_URL');
+        console.log('  - Verify any provider API key or rate limit');
+        console.log('');
     }
 
     if (result.checks.balance.status === 'error') {
-        issues.push('❌ Zero USDC Balance');
-        console.log(`${colors.red}${colors.bright}\n📋 Balance Issue:${colors.reset}`);
-        console.log('   • Your wallet has no USDC to trade with');
-        console.log('   • Bridge USDC to Polygon: https://wallet.polygon.technology/polygon/bridge/deposit');
-        console.log('   • Or buy USDC on an exchange and withdraw to Polygon network');
-        console.log('   • Also get POL (MATIC) for gas fees (~$5-10 worth)\n');
+        console.log(`${colors.red}${colors.bright}FAIL - Trading balance${colors.reset}`);
+        console.log('  - Wallet balance is zero');
+        console.log('  - Fund USDC and gas before attempting live mode');
+        console.log('');
     } else if (result.checks.balance.status === 'warning') {
-        console.log(`${colors.yellow}${colors.bright}\n⚠️  Low Balance Warning:${colors.reset}`);
-        console.log(`   • Balance: $${result.checks.balance.balance?.toFixed(2) || '0.00'}`);
-        console.log('   • Consider adding more USDC to avoid missing trades');
-        console.log('   • Recommended minimum: $50-100 for active trading\n');
+        console.log(`${colors.yellow}${colors.bright}WARN - Trading balance${colors.reset}`);
+        console.log(`  - Balance detected: $${result.checks.balance.balance?.toFixed(2) || '0.00'}`);
+        console.log('  - Low balances can cause skipped trades or risk tighter caps');
+        console.log('');
     }
 
     if (result.checks.polymarketApi.status === 'error') {
-        issues.push('❌ Polymarket API Failed');
-        console.log(`${colors.red}${colors.bright}\n📋 API Issue:${colors.reset}`);
-        console.log('   • Polymarket API is not responding');
-        console.log('   • Check your internet connection');
-        console.log('   • Polymarket may be experiencing downtime');
-        console.log('   • Check status: https://polymarket.com\n');
+        console.log(`${colors.red}${colors.bright}FAIL - Polymarket API${colors.reset}`);
+        console.log('  - Confirm internet access and Polymarket availability');
+        console.log('');
     }
 
-    if (issues.length === 0) {
-        console.log(`${colors.green}${colors.bright}\n🎉 All Systems Operational!${colors.reset}\n`);
-        console.log(`${colors.cyan}You're ready to start trading:${colors.reset}`);
-        console.log(`   ${colors.green}npm start${colors.reset}\n`);
+    if (failCount === 0) {
+        console.log(`${colors.green}${colors.bright}Next action:${colors.reset}`);
+        console.log(
+            `  - Run ${colors.green}npm start${colors.reset} to launch COPY MARKET in ${
+                process.env.PREVIEW_MODE === 'true' ? 'preview' : 'live'
+            } mode`
+        );
+        console.log('  - Verify /api/status after startup');
+        console.log('');
     } else {
-        console.log(`${colors.red}${colors.bright}\n⚠️  ${issues.length} Issue(s) Found${colors.reset}`);
-        console.log(`\n${colors.yellow}Fix the issues above before starting the bot.${colors.reset}\n`);
+        console.log(`${colors.yellow}${colors.bright}Next action:${colors.reset}`);
+        console.log('  - Fix FAIL items above before starting the bot');
+        console.log('  - Re-run npm run health after each config change');
+        console.log('');
     }
-}
-
-function printConfiguration() {
-    console.log(`${colors.cyan}📊 Configuration Summary:${colors.reset}\n`);
-    console.log(`   Trading Wallet: ${ENV.PROXY_WALLET.slice(0, 6)}...${ENV.PROXY_WALLET.slice(-4)}`);
-    console.log(`   Tracking ${ENV.USER_ADDRESSES.length} trader(s):`);
-    ENV.USER_ADDRESSES.forEach((addr, idx) => {
-        console.log(`      ${idx + 1}. ${addr.slice(0, 6)}...${addr.slice(-4)}`);
-    });
-    console.log(`   Check Interval: ${ENV.FETCH_INTERVAL}s`);
-    console.log(`   Trade Multiplier: ${ENV.TRADE_MULTIPLIER}x`);
-    console.log('');
 }
 
 const main = async () => {
     try {
         printHeader();
-        console.log(`${colors.yellow}⏳ Running diagnostic checks...${colors.reset}\n`);
+        console.log(`${colors.yellow}Running diagnostic checks...${colors.reset}\n`);
 
         await connectDB();
         const result = await performHealthCheck();
@@ -101,17 +106,12 @@ const main = async () => {
         printConfiguration();
         printRecommendations(result);
 
-        if (result.healthy) {
-            process.exit(0);
-        } else {
-            process.exit(1);
-        }
+        process.exit(result.healthy ? 0 : 1);
     } catch (error) {
-        console.error(`\n${colors.red}${colors.bright}❌ Health Check Error${colors.reset}\n`);
+        console.error(`\n${colors.red}${colors.bright}Health check error${colors.reset}\n`);
         if (error instanceof Error) {
             console.error(`${error.message}\n`);
-            console.error(`${colors.yellow}💡 Tip: Run the setup wizard to reconfigure:${colors.reset}`);
-            console.error(`   ${colors.cyan}npm run setup${colors.reset}\n`);
+            console.error(`${colors.yellow}Tip:${colors.reset} run ${colors.cyan}npm run setup${colors.reset} to refresh your starter .env\n`);
         } else {
             console.error(error);
         }

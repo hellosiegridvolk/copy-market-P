@@ -3,48 +3,202 @@ import swaggerUi from 'swagger-ui-express';
 import { getDbDir } from '../config/db';
 import * as fs from 'fs';
 import * as path from 'path';
+import { TradeLifecycleStatus, UserActivityInterface } from '../interfaces/User';
 import { getRuntimeStatus } from '../services/runtimeStatus';
 
 const app = express();
 app.use(express.json());
 
-// --- Swagger API Docs ---
 const swaggerDoc = {
     openapi: '3.0.0',
-    info: { title: 'COPY MARKET API', version: '2.0.0', description: 'Monitor and manage your copy trading bot' },
+    info: {
+        title: 'COPY MARKET API',
+        version: '2.0.0',
+        description: 'Monitor and manage your copy trading bot',
+    },
     paths: {
-        '/api/health': { get: { summary: 'Health check', tags: ['System'], responses: { 200: { description: 'OK' } } } },
-        '/api/status': { get: { summary: 'Bot status', tags: ['Bot'], responses: { 200: { description: 'Bot running status' } } } },
-        '/api/config': { get: { summary: 'Current configuration', tags: ['Config'], responses: { 200: { description: 'Config values' } } } },
-        '/api/trades': { get: { summary: 'Recent trades', tags: ['Trading'], parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', default: 20 } }], responses: { 200: { description: 'Trade list' } } } },
+        '/api/health': {
+            get: {
+                summary: 'Health check',
+                tags: ['System'],
+                responses: { 200: { description: 'OK' } },
+            },
+        },
+        '/api/status': {
+            get: {
+                summary: 'Bot status',
+                tags: ['Bot'],
+                responses: { 200: { description: 'Bot running status' } },
+            },
+        },
+        '/api/config': {
+            get: {
+                summary: 'Current configuration',
+                tags: ['Config'],
+                responses: { 200: { description: 'Config values' } },
+            },
+        },
+        '/api/trades': {
+            get: {
+                summary: 'Recent trades',
+                tags: ['Trading'],
+                parameters: [
+                    {
+                        name: 'limit',
+                        in: 'query',
+                        schema: { type: 'integer', default: 20 },
+                    },
+                ],
+                responses: { 200: { description: 'Trade list' } },
+            },
+        },
     },
 };
+
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
 
-// --- API Routes ---
 let botStartTime = Date.now();
 
+const deriveLegacyStatus = (trade: UserActivityInterface): TradeLifecycleStatus => {
+    if (trade.status) {
+        return trade.status;
+    }
+
+    if (trade.bot === true) {
+        return trade.botExcutedTime === 999 ? 'skipped' : 'executed';
+    }
+
+    return 'new';
+};
+
+const readPersistedTrades = (): UserActivityInterface[] => {
+    const dbDir = getDbDir();
+    if (!fs.existsSync(dbDir)) {
+        return [];
+    }
+
+    const trades: UserActivityInterface[] = [];
+    for (const file of fs.readdirSync(dbDir).filter((entry) => entry.startsWith('user_activities_'))) {
+        try {
+            const content = fs.readFileSync(path.join(dbDir, file), 'utf-8');
+            content
+                .split('\n')
+                .filter(Boolean)
+                .forEach((line) => {
+                    try {
+                        trades.push(JSON.parse(line));
+                    } catch {
+                        // Ignore malformed rows from local datastore inspection.
+                    }
+                });
+        } catch {
+            // Ignore unreadable files so status can still render partial truth.
+        }
+    }
+
+    return trades;
+};
+
+const getQueueCounts = (trades: UserActivityInterface[]) => {
+    const queue = {
+        new: 0,
+        processing: 0,
+        failed: 0,
+        retryExhausted: 0,
+        partialFill: 0,
+        executed: 0,
+        skipped: 0,
+    };
+
+    for (const trade of trades) {
+        switch (deriveLegacyStatus(trade)) {
+            case 'new':
+                queue.new += 1;
+                break;
+            case 'processing':
+                queue.processing += 1;
+                break;
+            case 'failed':
+                queue.failed += 1;
+                break;
+            case 'retry_exhausted':
+                queue.retryExhausted += 1;
+                break;
+            case 'partial_fill':
+                queue.partialFill += 1;
+                break;
+            case 'executed':
+                queue.executed += 1;
+                break;
+            case 'skipped':
+                queue.skipped += 1;
+                break;
+        }
+    }
+
+    return queue;
+};
+
+const isWorkerStale = (lastLoopAt?: number | null): boolean => {
+    if (!lastLoopAt) {
+        return false;
+    }
+
+    const fetchIntervalSeconds = parseInt(process.env.FETCH_INTERVAL || '1', 10);
+    const staleThresholdMs = Math.max((fetchIntervalSeconds + 5) * 1000, 10000);
+    return Date.now() - lastLoopAt > staleThresholdMs;
+};
+
 app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', uptime: Math.floor((Date.now() - botStartTime) / 1000), timestamp: new Date().toISOString() });
+    res.json({
+        status: 'ok',
+        uptime: Math.floor((Date.now() - botStartTime) / 1000),
+        timestamp: new Date().toISOString(),
+    });
 });
 
 app.get('/api/status', (_req, res) => {
     const dbDir = getDbDir();
-    const dbFiles = fs.existsSync(dbDir) ? fs.readdirSync(dbDir).filter(f => f.endsWith('.db')) : [];
+    const dbFiles = fs.existsSync(dbDir)
+        ? fs.readdirSync(dbDir).filter((file) => file.endsWith('.db'))
+        : [];
     const runtime = getRuntimeStatus();
+    const trades = readPersistedTrades();
+    const queue = getQueueCounts(trades);
+    const monitorStale = runtime.monitor.running && isWorkerStale(runtime.monitor.lastLoopAt);
+    const executorStale = runtime.executor.running && isWorkerStale(runtime.executor.lastLoopAt);
+    const running = runtime.monitor.running || runtime.executor.running;
+    const healthy = running && !monitorStale && !executorStale && !runtime.killSwitchActive;
+
     res.json({
-        running: runtime.isRunning,
+        running,
+        healthy,
         uptime: Math.floor((Date.now() - botStartTime) / 1000),
         mode: runtime.mode,
         previewMode: runtime.mode === 'preview',
-        killSwitchTriggered: runtime.killSwitchTriggered,
+        killSwitchActive: runtime.killSwitchActive,
         killSwitchReason: runtime.killSwitchReason || null,
-        lastPollAt: runtime.lastPollAt || null,
-        lastPollSuccessAt: runtime.lastPollSuccessAt || null,
-        lastExecutionSuccessAt: runtime.lastExecutionSuccessAt || null,
+        lastSuccessAt: runtime.lastSuccessAt || null,
         lastError: runtime.lastError || null,
         lastErrorAt: runtime.lastErrorAt || null,
-        queueDepth: runtime.queueDepth || 0,
+        monitor: {
+            running: runtime.monitor.running,
+            stale: monitorStale,
+            lastLoopAt: runtime.monitor.lastLoopAt || null,
+            lastSuccessAt: runtime.monitor.lastSuccessAt || null,
+            lastError: runtime.monitor.lastError || null,
+            lastErrorAt: runtime.monitor.lastErrorAt || null,
+        },
+        executor: {
+            running: runtime.executor.running,
+            stale: executorStale,
+            lastLoopAt: runtime.executor.lastLoopAt || null,
+            lastSuccessAt: runtime.executor.lastSuccessAt || null,
+            lastError: runtime.executor.lastError || null,
+            lastErrorAt: runtime.executor.lastErrorAt || null,
+            aggregationQueueDepth: runtime.aggregationQueueDepth || 0,
+        },
+        queue,
         dataFiles: dbFiles.length,
     });
 });
@@ -66,97 +220,215 @@ app.get('/api/config', (_req, res) => {
 
 app.get('/api/trades', (req, res) => {
     const limit = parseInt(req.query.limit as string) || 20;
-    const dbDir = getDbDir();
-    const trades: any[] = [];
-    if (fs.existsSync(dbDir)) {
-        for (const file of fs.readdirSync(dbDir).filter(f => f.startsWith('user_activities_'))) {
-            try {
-                const content = fs.readFileSync(path.join(dbDir, file), 'utf-8');
-                content.split('\n').filter(Boolean).forEach(line => {
-                    try { trades.push(JSON.parse(line)); } catch { /* skip malformed */ }
-                });
-            } catch { /* skip */ }
-        }
-    }
+    const trades = readPersistedTrades();
     trades.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     res.json(trades.slice(0, limit));
 });
 
-// --- Web UI ---
 const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COPY MARKET</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--accent:#58a6ff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);padding:20px}
-.container{max-width:1200px;margin:0 auto}
-h1{color:var(--accent);margin-bottom:20px;font-size:1.5em}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:20px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px}
-.card h3{color:var(--accent);margin-bottom:12px;font-size:0.9em;text-transform:uppercase;letter-spacing:1px}
-.stat{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.9em}
-.stat:last-child{border:none}
-.stat .label{color:#8b949e}
-.stat .value{font-weight:600}
-.badge{padding:2px 8px;border-radius:12px;font-size:0.8em}
-.badge.green{background:#238636;color:#fff}
-.badge.yellow{background:#9e6a03;color:#fff}
-.badge.red{background:#da3633;color:#fff}
-table{width:100%;border-collapse:collapse;font-size:0.85em}
-th,td{padding:8px;text-align:left;border-bottom:1px solid var(--border)}
-th{color:#8b949e;font-weight:500}
-.buy{color:var(--green)}.sell{color:var(--red)}
-.links{margin-top:16px;font-size:0.85em}
-.links a{color:var(--accent);margin-right:16px;text-decoration:none}
-.links a:hover{text-decoration:underline}
-#lang{float:right;background:var(--card);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:4px}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --accent: #58a6ff;
+  --green: #238636;
+  --yellow: #9e6a03;
+  --red: #da3633;
+}
+body {
+  font-family: "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding: 20px;
+}
+.container { max-width: 1200px; margin: 0 auto; }
+h1 { color: var(--accent); margin-bottom: 20px; font-size: 1.5rem; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.card h3 {
+  color: var(--accent);
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.stat:last-child { border-bottom: none; }
+.label { color: #8b949e; }
+.value { font-weight: 600; text-align: right; }
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  color: #fff;
+}
+.badge.green { background: var(--green); }
+.badge.yellow { background: var(--yellow); }
+.badge.red { background: var(--red); }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+th { color: #8b949e; font-weight: 500; }
+.buy { color: #3fb950; }
+.sell { color: #f85149; }
+.links { margin-top: 16px; font-size: 0.85rem; }
+.links a {
+  color: var(--accent);
+  margin-right: 16px;
+  text-decoration: none;
+}
+.links a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
 <div class="container">
-<select id="lang" onchange="setLang(this.value)"><option value="en">English</option><option value="zh">中文</option><option value="ja">日本語</option></select>
-<h1>🤖 COPY MARKET</h1>
-<div class="grid">
-<div class="card" id="status-card"><h3 data-i18n="status">Status</h3><div id="status">Loading...</div></div>
-<div class="card" id="config-card"><h3 data-i18n="config">Configuration</h3><div id="config">Loading...</div></div>
-</div>
-<div class="card"><h3 data-i18n="trades">Recent Trades</h3><div id="trades">Loading...</div></div>
-<div class="links">
-<a href="/docs" data-i18n="swagger">📖 API Docs (Swagger)</a>
-<a href="/api/health">🏥 Health Check</a>
-<a href="/api/trades?limit=100">📊 All Trades (JSON)</a>
-</div>
+  <h1>COPY MARKET</h1>
+  <div class="grid">
+    <div class="card">
+      <h3>Runtime status</h3>
+      <div id="status">Loading...</div>
+    </div>
+    <div class="card">
+      <h3>Configuration</h3>
+      <div id="config">Loading...</div>
+    </div>
+    <div class="card">
+      <h3>Queue</h3>
+      <div id="queue">Loading...</div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Recent trades</h3>
+    <div id="trades">Loading...</div>
+  </div>
+  <div class="links">
+    <a href="/docs">API Docs</a>
+    <a href="/api/health">Health Check</a>
+    <a href="/api/trades?limit=100">All Trades (JSON)</a>
+  </div>
 </div>
 <script>
-const i18n={en:{status:'Status',config:'Configuration',trades:'Recent Trades',swagger:'📖 API Docs',uptime:'Uptime',running:'Running',preview:'Preview Mode',dataFiles:'Data Files',noTrades:'No trades yet'},zh:{status:'状态',config:'配置',trades:'最近交易',swagger:'📖 API 文档',uptime:'运行时间',running:'运行中',preview:'预览模式',dataFiles:'数据文件',noTrades:'暂无交易'},ja:{status:'ステータス',config:'設定',trades:'最近の取引',swagger:'📖 APIドキュメント',uptime:'稼働時間',running:'実行中',preview:'プレビューモード',dataFiles:'データファイル',noTrades:'取引なし'}};
-let lang='en';
-function setLang(l){lang=l;document.querySelectorAll('[data-i18n]').forEach(e=>e.textContent=i18n[l][e.dataset.i18n]||e.textContent);refresh()}
-function fmt(s){const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h>0?h+'h '+m+'m':m+'m '+s%60+'s'}
-async function refresh(){
-try{
-const[st,cfg,tr]=await Promise.all([fetch('/api/status').then(r=>r.json()),fetch('/api/config').then(r=>r.json()),fetch('/api/trades?limit=10').then(r=>r.json())]);
-document.getElementById('status').innerHTML=\`<div class="stat"><span class="label">\${i18n[lang].running}</span><span class="badge green">✓</span></div><div class="stat"><span class="label">\${i18n[lang].uptime}</span><span class="value">\${fmt(st.uptime)}</span></div><div class="stat"><span class="label">\${i18n[lang].preview}</span><span class="value">\${st.previewMode?'✅':'❌'}</span></div><div class="stat"><span class="label">\${i18n[lang].dataFiles}</span><span class="value">\${st.dataFiles}</span></div>\`;
-document.getElementById('config').innerHTML=Object.entries(cfg).map(([k,v])=>\`<div class="stat"><span class="label">\${k}</span><span class="value">\${v}</span></div>\`).join('');
-if(tr.length===0){document.getElementById('trades').innerHTML='<p style="padding:12px;color:#8b949e">'+i18n[lang].noTrades+'</p>';return}
-document.getElementById('trades').innerHTML='<table><tr><th>Time</th><th>Side</th><th>Amount</th><th>Price</th><th>Market</th></tr>'+tr.map(t=>\`<tr><td>\${new Date(t.timestamp*1000).toLocaleString()}</td><td class="\${(t.side||'').toLowerCase()}">\${t.side||'-'}</td><td>$\${(t.usdcSize||0).toFixed(2)}</td><td>\${(t.price||0).toFixed(4)}</td><td>\${(t.title||t.slug||'-').slice(0,40)}</td></tr>\`).join('')+'</table>';
-}catch(e){document.getElementById('status').innerHTML='<span class="badge red">Error</span>'}
+const formatSeconds = (seconds) => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return h > 0 ? h + 'h ' + m + 'm' : m + 'm ' + s + 's';
+};
+
+const formatTime = (value) => value ? new Date(value).toLocaleString() : 'n/a';
+
+const badge = (label, tone) => '<span class="badge ' + tone + '">' + label + '</span>';
+
+async function refresh() {
+  try {
+    const [status, config, trades] = await Promise.all([
+      fetch('/api/status').then((response) => response.json()),
+      fetch('/api/config').then((response) => response.json()),
+      fetch('/api/trades?limit=10').then((response) => response.json())
+    ]);
+
+    const overallBadge = status.healthy
+      ? badge('healthy', 'green')
+      : status.killSwitchActive
+        ? badge('kill switch', 'red')
+        : status.running
+          ? badge('degraded', 'yellow')
+          : badge('stopped', 'red');
+
+    document.getElementById('status').innerHTML = [
+      ['overall', overallBadge],
+      ['uptime', formatSeconds(status.uptime)],
+      ['mode', status.mode],
+      ['last success', formatTime(status.lastSuccessAt)],
+      ['last error', status.lastError || 'none'],
+      ['monitor', (status.monitor.running ? 'running' : 'stopped') + (status.monitor.stale ? ' (stale)' : '')],
+      ['monitor heartbeat', formatTime(status.monitor.lastLoopAt)],
+      ['executor', (status.executor.running ? 'running' : 'stopped') + (status.executor.stale ? ' (stale)' : '')],
+      ['executor heartbeat', formatTime(status.executor.lastLoopAt)],
+      ['kill switch', status.killSwitchActive ? (status.killSwitchReason || 'active') : 'inactive']
+    ].map(([label, value]) => '<div class="stat"><span class="label">' + label + '</span><span class="value">' + value + '</span></div>').join('');
+
+    document.getElementById('config').innerHTML = Object.entries(config)
+      .map(([key, value]) => '<div class="stat"><span class="label">' + key + '</span><span class="value">' + value + '</span></div>')
+      .join('');
+
+    document.getElementById('queue').innerHTML = Object.entries(status.queue)
+      .map(([key, value]) => '<div class="stat"><span class="label">' + key + '</span><span class="value">' + value + '</span></div>')
+      .join('');
+
+    if (!trades.length) {
+      document.getElementById('trades').innerHTML = '<p style="padding:12px;color:#8b949e">No trades yet</p>';
+      return;
+    }
+
+    document.getElementById('trades').innerHTML =
+      '<table><tr><th>Time</th><th>Status</th><th>Side</th><th>Amount</th><th>Market</th></tr>' +
+      trades.map((trade) => {
+        const sideClass = (trade.side || '').toLowerCase();
+        return '<tr>' +
+          '<td>' + new Date((trade.timestamp || 0) * 1000).toLocaleString() + '</td>' +
+          '<td>' + (trade.status || 'legacy') + '</td>' +
+          '<td class="' + sideClass + '">' + (trade.side || '-') + '</td>' +
+          '<td>$' + Number(trade.usdcSize || 0).toFixed(2) + '</td>' +
+          '<td>' + ((trade.title || trade.slug || '-').slice(0, 40)) + '</td>' +
+        '</tr>';
+      }).join('') +
+      '</table>';
+  } catch (error) {
+    document.getElementById('status').innerHTML = badge('error', 'red');
+  }
 }
-refresh();setInterval(refresh,5000);
+
+refresh();
+setInterval(refresh, 5000);
 </script>
-</body></html>`;
+</body>
+</html>`;
 
-app.get('/', (_req, res) => { res.type('html').send(html); });
+app.get('/', (_req, res) => {
+    res.type('html').send(html);
+});
 
-export const startServer = (port: number = parseInt(process.env.PORT || '3000')) => {
+export const startServer = (port: number = parseInt(process.env.PORT || '3000', 10)) => {
     botStartTime = Date.now();
     app.listen(port, '0.0.0.0', () => {
-        console.log(`\n🌐 Web UI:  http://0.0.0.0:${port}`);
-        console.log(`📖 Swagger: http://0.0.0.0:${port}/docs`);
-        console.log(`🔌 API:     http://0.0.0.0:${port}/api/health\n`);
+        console.log(`\nWeb UI:  http://0.0.0.0:${port}`);
+        console.log(`Swagger: http://0.0.0.0:${port}/docs`);
+        console.log(`API:     http://0.0.0.0:${port}/api/health\n`);
     });
 };
+
+if (require.main === module) {
+    startServer();
+}
 
 export default app;

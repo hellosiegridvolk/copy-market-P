@@ -2,6 +2,7 @@ import { ENV } from '../config/env';
 import { getUserActivityModel, getUserPositionModel } from '../models/userHistory';
 import fetchData from '../utils/fetchData';
 import Logger from '../utils/logger';
+import { updateRuntimeStatus, updateWorkerStatus } from './runtimeStatus';
 
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const TOO_OLD_TIMESTAMP = ENV.TOO_OLD_TIMESTAMP;
@@ -17,6 +18,47 @@ const userModels = USER_ADDRESSES.map((address) => ({
     UserActivity: getUserActivityModel(address),
     UserPosition: getUserPositionModel(address),
 }));
+
+const buildActivityRecord = (address: string, activity: any) => ({
+    proxyWallet: activity.proxyWallet,
+    timestamp: activity.timestamp,
+    conditionId: activity.conditionId,
+    type: activity.type,
+    size: activity.size,
+    usdcSize: activity.usdcSize,
+    transactionHash: activity.transactionHash,
+    price: activity.price,
+    asset: activity.asset,
+    side: activity.side,
+    outcomeIndex: activity.outcomeIndex,
+    title: activity.title,
+    slug: activity.slug,
+    icon: activity.icon,
+    eventSlug: activity.eventSlug,
+    outcome: activity.outcome,
+    name: activity.name,
+    pseudonym: activity.pseudonym,
+    bio: activity.bio,
+    profileImage: activity.profileImage,
+    profileImageOptimized: activity.profileImageOptimized,
+    bot: false,
+    botExcutedTime: 0,
+    status: 'new',
+    retryCount: 0,
+    lastError: null,
+    lastAttemptAt: null,
+    executedAt: null,
+    orderId: null,
+    orderStatus: null,
+    orderResult: null,
+    tokenId: activity.asset,
+    marketSlug: activity.slug,
+    sizeRequested: activity.usdcSize,
+    sizeExecuted: 0,
+    detectedAt: Date.now(),
+    sourceTrader: address,
+    sourceTradeId: activity.transactionHash,
+});
 
 const init = async () => {
     const counts: number[] = [];
@@ -98,7 +140,11 @@ const init = async () => {
         const topPositions = positions
             .sort((a, b) => (b.percentPnl || 0) - (a.percentPnl || 0))
             .slice(0, 3)
-            .map((p) => p.toObject());
+            .map((position) =>
+                typeof (position as { toObject?: () => unknown }).toObject === 'function'
+                    ? (position as { toObject: () => unknown }).toObject()
+                    : position
+            );
         positionDetails.push(topPositions);
     }
     Logger.clearLine();
@@ -107,6 +153,8 @@ const init = async () => {
 
 const fetchTradeDataForTrader = async ({ address, UserActivity, UserPosition }: typeof userModels[number]) => {
     try {
+        let newTradesDetected = 0;
+
         // Fetch trade activities from Polymarket API
         const apiUrl = `https://data-api.polymarket.com/activity?user=${address}&type=TRADE`;
         const activities = await fetchData(apiUrl);
@@ -125,31 +173,8 @@ const fetchTradeDataForTrader = async ({ address, UserActivity, UserPosition }: 
             }).exec();
             if (exists) continue;
 
-            await UserActivity({
-                proxyWallet: activity.proxyWallet,
-                timestamp: activity.timestamp,
-                conditionId: activity.conditionId,
-                type: activity.type,
-                size: activity.size,
-                usdcSize: activity.usdcSize,
-                transactionHash: activity.transactionHash,
-                price: activity.price,
-                asset: activity.asset,
-                side: activity.side,
-                outcomeIndex: activity.outcomeIndex,
-                title: activity.title,
-                slug: activity.slug,
-                icon: activity.icon,
-                eventSlug: activity.eventSlug,
-                outcome: activity.outcome,
-                name: activity.name,
-                pseudonym: activity.pseudonym,
-                bio: activity.bio,
-                profileImage: activity.profileImage,
-                profileImageOptimized: activity.profileImageOptimized,
-                bot: false,
-                botExcutedTime: 0,
-            }).save();
+            await UserActivity(buildActivityRecord(address, activity)).save();
+            newTradesDetected += 1;
             Logger.info(`New trade detected for ${address.slice(0, 6)}...${address.slice(-4)}`);
         }
 
@@ -161,47 +186,60 @@ const fetchTradeDataForTrader = async ({ address, UserActivity, UserPosition }: 
             for (const position of positions) {
                 await UserPosition.findOneAndUpdate(
                     { asset: position.asset, conditionId: position.conditionId },
-                        {
-                            proxyWallet: position.proxyWallet,
-                            asset: position.asset,
-                            conditionId: position.conditionId,
-                            size: position.size,
-                            avgPrice: position.avgPrice,
-                            initialValue: position.initialValue,
-                            currentValue: position.currentValue,
-                            cashPnl: position.cashPnl,
-                            percentPnl: position.percentPnl,
-                            totalBought: position.totalBought,
-                            realizedPnl: position.realizedPnl,
-                            percentRealizedPnl: position.percentRealizedPnl,
-                            curPrice: position.curPrice,
-                            redeemable: position.redeemable,
-                            mergeable: position.mergeable,
-                            title: position.title,
-                            slug: position.slug,
-                            icon: position.icon,
-                            eventSlug: position.eventSlug,
-                            outcome: position.outcome,
-                            outcomeIndex: position.outcomeIndex,
-                            oppositeOutcome: position.oppositeOutcome,
-                            oppositeAsset: position.oppositeAsset,
-                            endDate: position.endDate,
-                            negativeRisk: position.negativeRisk,
-                        },
-                        { upsert: true }
-                    );
+                    {
+                        proxyWallet: position.proxyWallet,
+                        asset: position.asset,
+                        conditionId: position.conditionId,
+                        size: position.size,
+                        avgPrice: position.avgPrice,
+                        initialValue: position.initialValue,
+                        currentValue: position.currentValue,
+                        cashPnl: position.cashPnl,
+                        percentPnl: position.percentPnl,
+                        totalBought: position.totalBought,
+                        realizedPnl: position.realizedPnl,
+                        percentRealizedPnl: position.percentRealizedPnl,
+                        curPrice: position.curPrice,
+                        redeemable: position.redeemable,
+                        mergeable: position.mergeable,
+                        title: position.title,
+                        slug: position.slug,
+                        icon: position.icon,
+                        eventSlug: position.eventSlug,
+                        outcome: position.outcome,
+                        outcomeIndex: position.outcomeIndex,
+                        oppositeOutcome: position.oppositeOutcome,
+                        oppositeAsset: position.oppositeAsset,
+                        endDate: position.endDate,
+                        negativeRisk: position.negativeRisk,
+                    },
+                    { upsert: true }
+                );
                 }
             }
-        } catch (error) {
+        return newTradesDetected;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        updateWorkerStatus('monitor', { lastError: message, lastErrorAt: Date.now() });
+        updateRuntimeStatus({ lastError: message, lastErrorAt: Date.now() });
         Logger.error(
-            `Error fetching data for ${address.slice(0, 6)}...${address.slice(-4)}: ${error}`
+            `Error fetching data for ${address.slice(0, 6)}...${address.slice(-4)}: ${message}`
         );
+        return 0;
     }
 };
 
 // Parallel fetch for all traders
 const fetchTradeData = async () => {
-    await Promise.allSettled(userModels.map(fetchTradeDataForTrader));
+    const results = await Promise.allSettled(userModels.map(fetchTradeDataForTrader));
+
+    return results.reduce((sum, result) => {
+        if (result.status === 'fulfilled') {
+            return sum + (result.value ?? 0);
+        }
+
+        return sum;
+    }, 0);
 };
 
 // Track if this is the first run
@@ -214,10 +252,16 @@ let isRunning = true;
  */
 export const stopTradeMonitor = () => {
     isRunning = false;
+    updateWorkerStatus('monitor', { running: false });
     Logger.info('Trade monitor shutdown requested...');
 };
 
 const tradeMonitor = async () => {
+    isRunning = true;
+    updateRuntimeStatus({
+        mode: process.env.PREVIEW_MODE === 'true' ? 'preview' : 'live',
+    });
+    updateWorkerStatus('monitor', { running: true, lastError: undefined, lastErrorAt: undefined });
     await init();
     Logger.success(`Monitoring ${USER_ADDRESSES.length} trader(s) every ${FETCH_INTERVAL}s`);
     Logger.separator();
@@ -227,8 +271,13 @@ const tradeMonitor = async () => {
         Logger.info('First run: marking all historical trades as processed...');
         for (const { address, UserActivity } of userModels) {
             const count = await UserActivity.updateMany(
-                { bot: false },
-                { $set: { bot: true, botExcutedTime: 999 } }
+                { bot: false, status: { $exists: false } },
+                {
+                    bot: true,
+                    botExcutedTime: 999,
+                    status: 'skipped',
+                    lastError: 'historical_trade_on_first_run',
+                }
             );
             if (count.modifiedCount > 0) {
                 Logger.info(
@@ -242,11 +291,32 @@ const tradeMonitor = async () => {
     }
 
     while (isRunning) {
-        await fetchTradeData();
+        try {
+            updateWorkerStatus('monitor', { lastLoopAt: Date.now() });
+            const newTradesDetected = await fetchTradeData();
+            const successAt = Date.now();
+            updateWorkerStatus('monitor', {
+                lastSuccessAt: successAt,
+                lastError: undefined,
+                lastErrorAt: undefined,
+            });
+            updateRuntimeStatus({ lastSuccessAt: successAt });
+
+            if (newTradesDetected > 0) {
+                Logger.info(`Detected ${newTradesDetected} new trade(s) across tracked traders`);
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            updateWorkerStatus('monitor', { lastError: message, lastErrorAt: Date.now() });
+            updateRuntimeStatus({ lastError: message, lastErrorAt: Date.now() });
+            Logger.error(`Trade monitor loop error: ${message}`);
+        }
+
         if (!isRunning) break;
         await new Promise((resolve) => setTimeout(resolve, FETCH_INTERVAL * 1000));
     }
 
+    updateWorkerStatus('monitor', { running: false });
     Logger.info('Trade monitor stopped');
 };
 

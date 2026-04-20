@@ -1,83 +1,66 @@
 import * as dotenv from 'dotenv';
 import { CopyStrategy, CopyStrategyConfig, parseTieredMultipliers } from './copyStrategy';
+
 dotenv.config();
 
-/**
- * Validate Ethereum address format
- */
-const isValidEthereumAddress = (address: string): boolean => {
-    return /^0x[a-fA-F0-9]{40}$/.test(address);
-};
+const PREVIEW_MODE = process.env.PREVIEW_MODE === 'true';
 
-/**
- * Validate required environment variables
- */
+const isValidEthereumAddress = (address: string): boolean => /^0x[a-fA-F0-9]{40}$/.test(address);
+
+const isValidPrivateKey = (value: string): boolean => /^[0-9a-fA-F]{64}$/.test(value);
+
 const validateRequiredEnv = (): void => {
     const required = [
         'USER_ADDRESSES',
         'PROXY_WALLET',
-        'PRIVATE_KEY',
         'CLOB_HTTP_URL',
         'CLOB_WS_URL',
         'RPC_URL',
         'USDC_CONTRACT_ADDRESS',
     ];
 
-    const missing: string[] = [];
-    for (const key of required) {
-        if (!process.env[key]) {
-            missing.push(key);
-        }
+    if (!PREVIEW_MODE) {
+        required.push('PRIVATE_KEY');
     }
 
-    if (missing.length > 0) {
-        console.error('\n❌ Configuration Error: Missing required environment variables\n');
-        console.error(`Missing variables: ${missing.join(', ')}\n`);
-        console.error('🔧 Quick fix:');
-        console.error('   1. Run the setup wizard: npm run setup');
-        console.error('   2. Or manually create .env file with all required variables\n');
-        console.error('📖 See docs/QUICK_START.md for detailed instructions\n');
-        throw new Error(
-            `Missing required environment variables: ${missing.join(', ')}`
-        );
+    const missing = required.filter((key) => !process.env[key]);
+
+    if (missing.length === 0) {
+        return;
     }
+
+    console.error('\nConfiguration error: missing required environment variables.\n');
+    console.error(`Missing variables: ${missing.join(', ')}\n`);
+    console.error('Quick fix:');
+    console.error('  1. Run: npm run setup');
+    console.error('  2. Edit .env');
+    console.error('  3. Keep PREVIEW_MODE=true for the first validation pass.\n');
+    console.error('See docs/QUICK_START.md and docs/WINDOWS_QUICK_START.md for examples.\n');
+
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
 };
 
-/**
- * Validate Ethereum addresses
- */
 const validateAddresses = (): void => {
     if (process.env.PROXY_WALLET && !isValidEthereumAddress(process.env.PROXY_WALLET)) {
-        console.error('\n❌ Invalid Wallet Address\n');
-        console.error(`Your PROXY_WALLET: ${process.env.PROXY_WALLET}`);
-        console.error('Expected format:    0x followed by 40 hexadecimal characters\n');
-        console.error('Example: 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0\n');
-        console.error('💡 Tips:');
-        console.error('   • Copy your wallet address from MetaMask');
-        console.error('   • Make sure it starts with 0x');
-        console.error('   • Should be exactly 42 characters long\n');
-        throw new Error(
-            `Invalid PROXY_WALLET address format: ${process.env.PROXY_WALLET}`
-        );
+        throw new Error(`Invalid PROXY_WALLET address format: ${process.env.PROXY_WALLET}`);
     }
 
     if (
         process.env.USDC_CONTRACT_ADDRESS &&
         !isValidEthereumAddress(process.env.USDC_CONTRACT_ADDRESS)
     ) {
-        console.error('\n❌ Invalid USDC Contract Address\n');
-        console.error(`Current value: ${process.env.USDC_CONTRACT_ADDRESS}`);
-        console.error('Default value: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174\n');
-        console.error('⚠️  Unless you know what you\'re doing, use the default value!\n');
         throw new Error(
             `Invalid USDC_CONTRACT_ADDRESS format: ${process.env.USDC_CONTRACT_ADDRESS}`
         );
     }
+
+    if (!PREVIEW_MODE && process.env.PRIVATE_KEY && !isValidPrivateKey(process.env.PRIVATE_KEY)) {
+        throw new Error(
+            'Invalid PRIVATE_KEY. Expected exactly 64 hexadecimal characters without 0x.'
+        );
+    }
 };
 
-/**
- * Validate numeric configuration values
- */
 const validateNumericConfig = (): void => {
     const fetchInterval = parseInt(process.env.FETCH_INTERVAL || '1', 10);
     if (isNaN(fetchInterval) || fetchInterval <= 0) {
@@ -114,7 +97,6 @@ const validateNumericConfig = (): void => {
         );
     }
 
-
     const port = parseInt(process.env.PORT || '3000', 10);
     if (isNaN(port) || port < 1 || port > 65535) {
         throw new Error(`Invalid PORT: ${process.env.PORT}. Must be between 1 and 65535.`);
@@ -122,118 +104,149 @@ const validateNumericConfig = (): void => {
 
     const dailyLossCap = parseFloat(process.env.DAILY_LOSS_CAP_PCT || '20');
     if (isNaN(dailyLossCap) || dailyLossCap <= 0 || dailyLossCap > 100) {
-        throw new Error(`Invalid DAILY_LOSS_CAP_PCT: ${process.env.DAILY_LOSS_CAP_PCT}. Must be > 0 and <= 100.`);
+        throw new Error(
+            `Invalid DAILY_LOSS_CAP_PCT: ${process.env.DAILY_LOSS_CAP_PCT}. Must be > 0 and <= 100.`
+        );
+    }
+
+    const slippageTolerance = parseFloat(process.env.SLIPPAGE_TOLERANCE || '0.05');
+    if (isNaN(slippageTolerance) || slippageTolerance < 0 || slippageTolerance > 1) {
+        throw new Error(
+            `Invalid SLIPPAGE_TOLERANCE: ${process.env.SLIPPAGE_TOLERANCE}. Must be between 0 and 1.`
+        );
+    }
+
+    const copySize = parseFloat(process.env.COPY_SIZE || '10.0');
+    if (isNaN(copySize) || copySize <= 0) {
+        throw new Error(`Invalid COPY_SIZE: ${process.env.COPY_SIZE}. Must be greater than 0.`);
+    }
+
+    const minOrderSizeUsd = parseFloat(process.env.MIN_ORDER_SIZE_USD || '1.0');
+    const maxOrderSizeUsd = parseFloat(process.env.MAX_ORDER_SIZE_USD || '100.0');
+    if (isNaN(minOrderSizeUsd) || minOrderSizeUsd <= 0) {
+        throw new Error(
+            `Invalid MIN_ORDER_SIZE_USD: ${process.env.MIN_ORDER_SIZE_USD}. Must be greater than 0.`
+        );
+    }
+
+    if (isNaN(maxOrderSizeUsd) || maxOrderSizeUsd < minOrderSizeUsd) {
+        throw new Error(
+            `Invalid MAX_ORDER_SIZE_USD: ${process.env.MAX_ORDER_SIZE_USD}. Must be greater than or equal to MIN_ORDER_SIZE_USD.`
+        );
+    }
+
+    if (process.env.MAX_POSITION_SIZE_USD) {
+        const maxPositionSizeUsd = parseFloat(process.env.MAX_POSITION_SIZE_USD);
+        if (isNaN(maxPositionSizeUsd) || maxPositionSizeUsd <= 0) {
+            throw new Error(
+                `Invalid MAX_POSITION_SIZE_USD: ${process.env.MAX_POSITION_SIZE_USD}. Must be greater than 0 when set.`
+            );
+        }
+    }
+
+    if (process.env.MAX_DAILY_VOLUME_USD) {
+        const maxDailyVolumeUsd = parseFloat(process.env.MAX_DAILY_VOLUME_USD);
+        if (isNaN(maxDailyVolumeUsd) || maxDailyVolumeUsd <= 0) {
+            throw new Error(
+                `Invalid MAX_DAILY_VOLUME_USD: ${process.env.MAX_DAILY_VOLUME_USD}. Must be greater than 0 when set.`
+            );
+        }
+    }
+
+    const killSwitchMaxErrors = parseInt(process.env.KILL_SWITCH_MAX_ERRORS || '5', 10);
+    if (isNaN(killSwitchMaxErrors) || killSwitchMaxErrors < 1 || killSwitchMaxErrors > 100) {
+        throw new Error(
+            `Invalid KILL_SWITCH_MAX_ERRORS: ${process.env.KILL_SWITCH_MAX_ERRORS}. Must be between 1 and 100.`
+        );
+    }
+
+    const aggregationWindowSeconds = parseInt(
+        process.env.TRADE_AGGREGATION_WINDOW_SECONDS || '300',
+        10
+    );
+    if (isNaN(aggregationWindowSeconds) || aggregationWindowSeconds < 1) {
+        throw new Error(
+            `Invalid TRADE_AGGREGATION_WINDOW_SECONDS: ${process.env.TRADE_AGGREGATION_WINDOW_SECONDS}. Must be a positive integer.`
+        );
     }
 };
 
-/**
- * Validate URL formats
- */
 const validateUrls = (): void => {
     if (process.env.CLOB_HTTP_URL && !process.env.CLOB_HTTP_URL.startsWith('http')) {
-        console.error('\n❌ Invalid CLOB_HTTP_URL\n');
-        console.error(`Current value: ${process.env.CLOB_HTTP_URL}`);
-        console.error('Default value: https://clob.polymarket.com/\n');
-        console.error('⚠️  Use the default value unless you have a specific reason to change it!\n');
         throw new Error(
             `Invalid CLOB_HTTP_URL: ${process.env.CLOB_HTTP_URL}. Must be a valid HTTP/HTTPS URL.`
         );
     }
 
     if (process.env.CLOB_WS_URL && !process.env.CLOB_WS_URL.startsWith('ws')) {
-        console.error('\n❌ Invalid CLOB_WS_URL\n');
-        console.error(`Current value: ${process.env.CLOB_WS_URL}`);
-        console.error('Default value: wss://ws-subscriptions-clob.polymarket.com/ws\n');
-        console.error('⚠️  Use the default value unless you have a specific reason to change it!\n');
         throw new Error(
             `Invalid CLOB_WS_URL: ${process.env.CLOB_WS_URL}. Must be a valid WebSocket URL (ws:// or wss://).`
         );
     }
 
     if (process.env.RPC_URL && !process.env.RPC_URL.startsWith('http')) {
-        console.error('\n❌ Invalid RPC_URL\n');
-        console.error(`Current value: ${process.env.RPC_URL}`);
-        console.error('Must start with: http:// or https://\n');
-        console.error('💡 Get a free RPC endpoint from:');
-        console.error('   • Infura:  https://infura.io');
-        console.error('   • Alchemy: https://www.alchemy.com');
-        console.error('   • Ankr:    https://www.ankr.com\n');
-        console.error('Example: https://polygon-mainnet.infura.io/v3/YOUR_PROJECT_ID\n');
-        throw new Error(`Invalid RPC_URL: ${process.env.RPC_URL}. Must be a valid HTTP/HTTPS URL.`);
+        throw new Error(
+            `Invalid RPC_URL: ${process.env.RPC_URL}. Must be a valid HTTP/HTTPS URL.`
+        );
     }
 };
 
-// Run all validations
 validateRequiredEnv();
 validateAddresses();
 validateNumericConfig();
 validateUrls();
 
-// Parse USER_ADDRESSES: supports both comma-separated string and JSON array
 const parseUserAddresses = (input: string): string[] => {
     const trimmed = input.trim();
-    // Check if it's JSON array format
+
     if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
         try {
             const parsed = JSON.parse(trimmed);
-            if (Array.isArray(parsed)) {
-                const addresses = parsed
-                    .map((addr) => addr.toLowerCase().trim())
-                    .filter((addr) => addr.length > 0);
-                // Validate each address
-                for (const addr of addresses) {
-                    if (!isValidEthereumAddress(addr)) {
-                        console.error('\n❌ Invalid Trader Address in USER_ADDRESSES\n');
-                        console.error(`Invalid address: ${addr}`);
-                        console.error('Expected format: 0x followed by 40 hexadecimal characters\n');
-                        console.error('💡 Where to find trader addresses:');
-                        console.error('   • Polymarket Leaderboard: https://polymarket.com/leaderboard');
-                        console.error('   • Polymarket Leaderboard: https://polymarket.com/leaderboard\n');
-                        console.error('Example: USER_ADDRESSES=\'0x7c3db723f1d4d8cb9c550095203b686cb11e5c6b\'\n');
-                        throw new Error(`Invalid Ethereum address in USER_ADDRESSES: ${addr}`);
-                    }
-                }
-                return addresses;
+            if (!Array.isArray(parsed)) {
+                throw new Error('USER_ADDRESSES JSON must be an array.');
             }
-        } catch (e) {
-            if (e instanceof Error && e.message.includes('Invalid Ethereum address')) {
-                throw e;
+
+            const addresses = parsed
+                .map((addr) => String(addr).toLowerCase().trim())
+                .filter((addr) => addr.length > 0);
+
+            for (const addr of addresses) {
+                if (!isValidEthereumAddress(addr)) {
+                    throw new Error(`Invalid Ethereum address in USER_ADDRESSES: ${addr}`);
+                }
+            }
+
+            return addresses;
+        } catch (error) {
+            if (error instanceof Error && error.message.includes('Invalid Ethereum address')) {
+                throw error;
             }
             throw new Error(
-                `Invalid JSON format for USER_ADDRESSES: ${e instanceof Error ? e.message : String(e)}`
+                `Invalid JSON format for USER_ADDRESSES: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
             );
         }
     }
-    // Otherwise treat as comma-separated
+
     const addresses = trimmed
         .split(',')
         .map((addr) => addr.toLowerCase().trim())
         .filter((addr) => addr.length > 0);
-    // Validate each address
+
     for (const addr of addresses) {
         if (!isValidEthereumAddress(addr)) {
-            console.error('\n❌ Invalid Trader Address in USER_ADDRESSES\n');
-            console.error(`Invalid address: ${addr}`);
-            console.error('Expected format: 0x followed by 40 hexadecimal characters\n');
-            console.error('💡 Where to find trader addresses:');
-            console.error('   • Polymarket Leaderboard: https://polymarket.com/leaderboard');
-            console.error('   • Polymarket Leaderboard: https://polymarket.com/leaderboard\n');
-            console.error('Example: USER_ADDRESSES=\'0x7c3db723f1d4d8cb9c550095203b686cb11e5c6b\'\n');
             throw new Error(`Invalid Ethereum address in USER_ADDRESSES: ${addr}`);
         }
     }
+
     return addresses;
 };
 
-// Parse copy strategy configuration
 const parseCopyStrategy = (): CopyStrategyConfig => {
-    // Support legacy COPY_PERCENTAGE + TRADE_MULTIPLIER for backward compatibility
     const hasLegacyConfig = process.env.COPY_PERCENTAGE && !process.env.COPY_STRATEGY;
 
     if (hasLegacyConfig) {
-        console.warn(
-            '⚠️  Using legacy COPY_PERCENTAGE configuration. Consider migrating to COPY_STRATEGY.'
-        );
         const copyPercentage = parseFloat(process.env.COPY_PERCENTAGE || '10.0');
         const tradeMultiplier = parseFloat(process.env.TRADE_MULTIPLIER || '1.0');
         const effectivePercentage = copyPercentage * tradeMultiplier;
@@ -251,23 +264,15 @@ const parseCopyStrategy = (): CopyStrategyConfig => {
                 : undefined,
         };
 
-        // Parse tiered multipliers if configured (even for legacy mode)
         if (process.env.TIERED_MULTIPLIERS) {
-            try {
-                config.tieredMultipliers = parseTieredMultipliers(process.env.TIERED_MULTIPLIERS);
-                console.log(`✓ Loaded ${config.tieredMultipliers.length} tiered multipliers`);
-            } catch (error) {
-                throw new Error(`Failed to parse TIERED_MULTIPLIERS: ${error instanceof Error ? error.message : String(error)}`);
-            }
+            config.tieredMultipliers = parseTieredMultipliers(process.env.TIERED_MULTIPLIERS);
         } else if (tradeMultiplier !== 1.0) {
-            // If using legacy single multiplier, store it
             config.tradeMultiplier = tradeMultiplier;
         }
 
         return config;
     }
 
-    // Parse new copy strategy configuration
     const strategyStr = (process.env.COPY_STRATEGY || 'PERCENTAGE').toUpperCase();
     const strategy =
         CopyStrategy[strategyStr as keyof typeof CopyStrategy] || CopyStrategy.PERCENTAGE;
@@ -285,7 +290,6 @@ const parseCopyStrategy = (): CopyStrategyConfig => {
             : undefined,
     };
 
-    // Add adaptive strategy parameters if applicable
     if (strategy === CopyStrategy.ADAPTIVE) {
         config.adaptiveMinPercent = parseFloat(
             process.env.ADAPTIVE_MIN_PERCENT || config.copySize.toString()
@@ -296,20 +300,12 @@ const parseCopyStrategy = (): CopyStrategyConfig => {
         config.adaptiveThreshold = parseFloat(process.env.ADAPTIVE_THRESHOLD_USD || '500.0');
     }
 
-    // Parse tiered multipliers if configured
     if (process.env.TIERED_MULTIPLIERS) {
-        try {
-            config.tieredMultipliers = parseTieredMultipliers(process.env.TIERED_MULTIPLIERS);
-            console.log(`✓ Loaded ${config.tieredMultipliers.length} tiered multipliers`);
-        } catch (error) {
-            throw new Error(`Failed to parse TIERED_MULTIPLIERS: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        config.tieredMultipliers = parseTieredMultipliers(process.env.TIERED_MULTIPLIERS);
     } else if (process.env.TRADE_MULTIPLIER) {
-        // Fall back to single multiplier if no tiers configured
         const singleMultiplier = parseFloat(process.env.TRADE_MULTIPLIER);
         if (singleMultiplier !== 1.0) {
             config.tradeMultiplier = singleMultiplier;
-            console.log(`✓ Using single trade multiplier: ${singleMultiplier}x`);
         }
     }
 
@@ -317,6 +313,7 @@ const parseCopyStrategy = (): CopyStrategyConfig => {
 };
 
 export const ENV = {
+    PREVIEW_MODE,
     USER_ADDRESSES: parseUserAddresses(process.env.USER_ADDRESSES as string),
     PROXY_WALLET: process.env.PROXY_WALLET as string,
     PRIVATE_KEY: process.env.PRIVATE_KEY as string,
@@ -325,20 +322,16 @@ export const ENV = {
     FETCH_INTERVAL: parseInt(process.env.FETCH_INTERVAL || '1', 10),
     TOO_OLD_TIMESTAMP: parseInt(process.env.TOO_OLD_TIMESTAMP || '24', 10),
     RETRY_LIMIT: parseInt(process.env.RETRY_LIMIT || '3', 10),
-    // Legacy parameters (kept for backward compatibility)
     TRADE_MULTIPLIER: parseFloat(process.env.TRADE_MULTIPLIER || '1.0'),
     COPY_PERCENTAGE: parseFloat(process.env.COPY_PERCENTAGE || '10.0'),
-    // New copy strategy configuration
     COPY_STRATEGY_CONFIG: parseCopyStrategy(),
-    // Network settings
     REQUEST_TIMEOUT_MS: parseInt(process.env.REQUEST_TIMEOUT_MS || '10000', 10),
     NETWORK_RETRY_LIMIT: parseInt(process.env.NETWORK_RETRY_LIMIT || '3', 10),
-    // Trade aggregation settings
     TRADE_AGGREGATION_ENABLED: process.env.TRADE_AGGREGATION_ENABLED === 'true',
     TRADE_AGGREGATION_WINDOW_SECONDS: parseInt(
         process.env.TRADE_AGGREGATION_WINDOW_SECONDS || '300',
         10
-    ), // 5 minutes default
+    ),
     RPC_URL: process.env.RPC_URL as string,
     USDC_CONTRACT_ADDRESS: process.env.USDC_CONTRACT_ADDRESS as string,
 };

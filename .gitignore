@@ -1,5 +1,6 @@
 # Environment & Secrets
 .env
+.env.txt
 .env.local
 .env.*.local
 

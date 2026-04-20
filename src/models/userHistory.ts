@@ -16,6 +16,15 @@ const isOperatorUpdate = (update: Record<string, unknown>): boolean => {
     return Object.keys(update).some((k) => k.startsWith('$'));
 };
 
+const toSafeUpdate = (update: Record<string, unknown>): Record<string, unknown> => {
+    if (isOperatorUpdate(update)) {
+        return update;
+    }
+
+    // Treat plain objects as partial field patches by default.
+    return { $set: update };
+};
+
 // Wrapper that provides a mongoose-like API over NeDB
 const createModel = (collectionName: string) => {
     const ds = getDatastore(collectionName);
@@ -41,7 +50,7 @@ const createModel = (collectionName: string) => {
             };
         },
         updateOne(query: Record<string, unknown>, update: Record<string, unknown>) {
-            return ds.updateAsync(query, update, {});
+            return ds.updateAsync(query, toSafeUpdate(update), {});
         },
         updateOneSet(query: Record<string, unknown>, fields: Record<string, unknown>) {
             return ds.updateAsync(query, { $set: fields }, {});
@@ -56,11 +65,8 @@ const createModel = (collectionName: string) => {
             return ds.updateAsync(query, doc, {});
         },
         updateMany(query: Record<string, unknown>, update: Record<string, unknown>) {
-            if (!isOperatorUpdate(update)) {
-                throw new Error('updateMany requires update operators like $set/$inc to avoid replacements');
-            }
             return ds
-                .updateAsync(query, update, { multi: true })
+                .updateAsync(query, toSafeUpdate(update), { multi: true })
                 .then((result) => ({
                     modifiedCount:
                         typeof result === 'number' ? result : (result as any).numAffected || 0,
@@ -71,7 +77,7 @@ const createModel = (collectionName: string) => {
             update: Record<string, unknown>,
             options: { upsert?: boolean } = {}
         ) {
-            return ds.updateAsync(query, { $set: update }, { upsert: options.upsert || false });
+            return ds.updateAsync(query, toSafeUpdate(update), { upsert: options.upsert || false });
         },
         countDocuments() {
             return ds.countAsync({});
