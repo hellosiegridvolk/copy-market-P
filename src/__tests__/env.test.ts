@@ -1,4 +1,6 @@
 describe('env.ts configuration', () => {
+    let consoleErrorSpy: jest.SpyInstance;
+
     const baseEnv = {
         USER_ADDRESSES: '0x1234567890abcdef1234567890abcdef12345678',
         PROXY_WALLET: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
@@ -34,11 +36,13 @@ describe('env.ts configuration', () => {
     beforeEach(() => {
         jest.resetModules();
         jest.doMock('dotenv', () => ({ config: jest.fn() }));
+        consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         resetEnv();
     });
 
     afterEach(() => {
         jest.dontMock('dotenv');
+        consoleErrorSpy.mockRestore();
         resetEnv();
     });
 

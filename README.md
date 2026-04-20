@@ -54,6 +54,7 @@ This repository now contains the unpacked application source. The runtime does n
 
 - `PREVIEW_MODE=true` is the recommended first run
 - `PREVIEW_MODE=false` enables live order posting
+- `npm run smoke:live:preflight` is the guarded read-only check to run immediately before the first live startup
 - The status API reports the effective mode, worker heartbeats, queue state, last success, and last error
 - Default API/UI port is `3000` unless `PORT` is set
 
@@ -67,8 +68,13 @@ This repository now contains the unpacked application source. The runtime does n
 4. `npm run validate:handoff`
 5. `npm run health`
    - if RPC connectivity fails, refresh `.env` from the current `.env.example` or update `RPC_URL`
-6. `npm start`
-7. Check:
+6. Optional live-only step after preview validation:
+   - set `PREVIEW_MODE=false`
+   - back up `data/`
+   - set `LIVE_SMOKE_CONFIRM=I_HAVE_BACKED_UP_DATA`
+   - run `npm run smoke:live:preflight`
+7. `npm start`
+8. Check:
    - `http://localhost:3000/api/health`
    - `http://localhost:3000/api/status`
    - `http://localhost:3000/docs`
@@ -91,5 +97,6 @@ This repository now contains the unpacked application source. The runtime does n
 ## Handoff notes
 
 - Start in preview mode and validate the lifecycle fields in the local datastore before enabling live orders
+- Use `npm run smoke:live:preflight` before the first live startup; it performs read-only live checks and does not place or cancel orders
 - Back up the `data/` directory before any live testing or deployment changes
 - Review `CODEX_FIX_SUMMARY.md` for the exact files inspected, mismatches reconciled, remaining blockers, and the next verification commands
