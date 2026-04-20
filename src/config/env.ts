@@ -169,6 +169,46 @@ const validateNumericConfig = (): void => {
             `Invalid TRADE_AGGREGATION_WINDOW_SECONDS: ${process.env.TRADE_AGGREGATION_WINDOW_SECONDS}. Must be a positive integer.`
         );
     }
+
+    const streamTargetRefreshIntervalSeconds = parseInt(
+        process.env.STREAM_TARGET_REFRESH_INTERVAL_SECONDS || '15',
+        10
+    );
+    if (isNaN(streamTargetRefreshIntervalSeconds) || streamTargetRefreshIntervalSeconds < 1) {
+        throw new Error(
+            `Invalid STREAM_TARGET_REFRESH_INTERVAL_SECONDS: ${process.env.STREAM_TARGET_REFRESH_INTERVAL_SECONDS}. Must be a positive integer.`
+        );
+    }
+
+    const streamHeartbeatIntervalSeconds = parseInt(
+        process.env.STREAM_HEARTBEAT_INTERVAL_SECONDS || '10',
+        10
+    );
+    if (isNaN(streamHeartbeatIntervalSeconds) || streamHeartbeatIntervalSeconds < 5) {
+        throw new Error(
+            `Invalid STREAM_HEARTBEAT_INTERVAL_SECONDS: ${process.env.STREAM_HEARTBEAT_INTERVAL_SECONDS}. Must be at least 5 seconds.`
+        );
+    }
+
+    const reconciliationIntervalSeconds = parseInt(
+        process.env.RECONCILIATION_INTERVAL_SECONDS || '15',
+        10
+    );
+    if (isNaN(reconciliationIntervalSeconds) || reconciliationIntervalSeconds < 1) {
+        throw new Error(
+            `Invalid RECONCILIATION_INTERVAL_SECONDS: ${process.env.RECONCILIATION_INTERVAL_SECONDS}. Must be a positive integer.`
+        );
+    }
+
+    const reconciliationStaleOrderSeconds = parseInt(
+        process.env.RECONCILIATION_STALE_ORDER_SECONDS || '60',
+        10
+    );
+    if (isNaN(reconciliationStaleOrderSeconds) || reconciliationStaleOrderSeconds < 5) {
+        throw new Error(
+            `Invalid RECONCILIATION_STALE_ORDER_SECONDS: ${process.env.RECONCILIATION_STALE_ORDER_SECONDS}. Must be at least 5 seconds.`
+        );
+    }
 };
 
 const validateUrls = (): void => {
@@ -330,6 +370,25 @@ export const ENV = {
     TRADE_AGGREGATION_ENABLED: process.env.TRADE_AGGREGATION_ENABLED === 'true',
     TRADE_AGGREGATION_WINDOW_SECONDS: parseInt(
         process.env.TRADE_AGGREGATION_WINDOW_SECONDS || '300',
+        10
+    ),
+    MARKET_WS_ENABLED: process.env.MARKET_WS_ENABLED !== 'false',
+    USER_WS_ENABLED: process.env.USER_WS_ENABLED !== 'false',
+    RECONCILIATION_ENABLED: process.env.RECONCILIATION_ENABLED !== 'false',
+    STREAM_TARGET_REFRESH_INTERVAL_SECONDS: parseInt(
+        process.env.STREAM_TARGET_REFRESH_INTERVAL_SECONDS || '15',
+        10
+    ),
+    STREAM_HEARTBEAT_INTERVAL_SECONDS: parseInt(
+        process.env.STREAM_HEARTBEAT_INTERVAL_SECONDS || '10',
+        10
+    ),
+    RECONCILIATION_INTERVAL_SECONDS: parseInt(
+        process.env.RECONCILIATION_INTERVAL_SECONDS || '15',
+        10
+    ),
+    RECONCILIATION_STALE_ORDER_SECONDS: parseInt(
+        process.env.RECONCILIATION_STALE_ORDER_SECONDS || '60',
         10
     ),
     RPC_URL: process.env.RPC_URL as string,

@@ -167,8 +167,20 @@ app.get('/api/status', (_req, res) => {
     const queue = getQueueCounts(trades);
     const monitorStale = runtime.monitor.running && isWorkerStale(runtime.monitor.lastLoopAt);
     const executorStale = runtime.executor.running && isWorkerStale(runtime.executor.lastLoopAt);
-    const running = runtime.monitor.running || runtime.executor.running;
-    const healthy = running && !monitorStale && !executorStale && !runtime.killSwitchActive;
+    const streamDegraded =
+        runtime.marketStream.state === 'error' || runtime.userStream.state === 'error';
+    const running =
+        runtime.monitor.running ||
+        runtime.executor.running ||
+        runtime.marketStream.running ||
+        runtime.userStream.running ||
+        runtime.reconciliation.running;
+    const healthy =
+        running &&
+        !monitorStale &&
+        !executorStale &&
+        !runtime.killSwitchActive &&
+        !streamDegraded;
 
     res.json({
         running,
@@ -198,6 +210,49 @@ app.get('/api/status', (_req, res) => {
             lastErrorAt: runtime.executor.lastErrorAt || null,
             aggregationQueueDepth: runtime.aggregationQueueDepth || 0,
         },
+        marketStream: {
+            running: runtime.marketStream.running,
+            state: runtime.marketStream.state,
+            endpoint: runtime.marketStream.endpoint || null,
+            subscribedCount: runtime.marketStream.subscribedCount,
+            reconnectAttempts: runtime.marketStream.reconnectAttempts,
+            lastConnectAt: runtime.marketStream.lastConnectAt || null,
+            lastDisconnectAt: runtime.marketStream.lastDisconnectAt || null,
+            lastMessageAt: runtime.marketStream.lastMessageAt || null,
+            lastHeartbeatAt: runtime.marketStream.lastHeartbeatAt || null,
+            lastPayloadSummary: runtime.marketStream.lastPayloadSummary || null,
+            lastError: runtime.marketStream.lastError || null,
+            lastErrorAt: runtime.marketStream.lastErrorAt || null,
+        },
+        userStream: {
+            running: runtime.userStream.running,
+            state: runtime.userStream.state,
+            endpoint: runtime.userStream.endpoint || null,
+            subscribedCount: runtime.userStream.subscribedCount,
+            reconnectAttempts: runtime.userStream.reconnectAttempts,
+            lastConnectAt: runtime.userStream.lastConnectAt || null,
+            lastDisconnectAt: runtime.userStream.lastDisconnectAt || null,
+            lastMessageAt: runtime.userStream.lastMessageAt || null,
+            lastHeartbeatAt: runtime.userStream.lastHeartbeatAt || null,
+            lastPayloadSummary: runtime.userStream.lastPayloadSummary || null,
+            lastError: runtime.userStream.lastError || null,
+            lastErrorAt: runtime.userStream.lastErrorAt || null,
+        },
+        reconciliation: {
+            enabled: runtime.reconciliation.enabled,
+            running: runtime.reconciliation.running,
+            lastLoopAt: runtime.reconciliation.lastLoopAt || null,
+            lastSuccessAt: runtime.reconciliation.lastSuccessAt || null,
+            lastError: runtime.reconciliation.lastError || null,
+            lastErrorAt: runtime.reconciliation.lastErrorAt || null,
+            scannedTrades: runtime.reconciliation.scannedTrades,
+            pendingTrades: runtime.reconciliation.pendingTrades,
+            queuedEvents: runtime.reconciliation.queuedEvents,
+            reconciledTrades: runtime.reconciliation.reconciledTrades,
+            lastOrderId: runtime.reconciliation.lastOrderId || null,
+            lastEventType: runtime.reconciliation.lastEventType || null,
+            lastEventStatus: runtime.reconciliation.lastEventStatus || null,
+        },
         queue,
         dataFiles: dbFiles.length,
     });
@@ -214,6 +269,14 @@ app.get('/api/config', (_req, res) => {
         dailyLossCap: process.env.DAILY_LOSS_CAP_PCT || '20',
         previewMode: process.env.PREVIEW_MODE || 'false',
         tradeAggregation: process.env.TRADE_AGGREGATION_ENABLED || 'false',
+        marketWsEnabled: process.env.MARKET_WS_ENABLED ?? 'true',
+        userWsEnabled: process.env.USER_WS_ENABLED ?? 'true',
+        reconciliationEnabled: process.env.RECONCILIATION_ENABLED ?? 'true',
+        streamTargetRefreshInterval: process.env.STREAM_TARGET_REFRESH_INTERVAL_SECONDS || '15',
+        streamHeartbeatInterval: process.env.STREAM_HEARTBEAT_INTERVAL_SECONDS || '10',
+        reconciliationInterval: process.env.RECONCILIATION_INTERVAL_SECONDS || '15',
+        reconciliationStaleOrderSeconds:
+            process.env.RECONCILIATION_STALE_ORDER_SECONDS || '60',
         telegramEnabled: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID),
     });
 });
@@ -374,6 +437,9 @@ async function refresh() {
       ['monitor heartbeat', formatTime(status.monitor.lastLoopAt)],
       ['executor', (status.executor.running ? 'running' : 'stopped') + (status.executor.stale ? ' (stale)' : '')],
       ['executor heartbeat', formatTime(status.executor.lastLoopAt)],
+      ['market stream', status.marketStream.state + ' (' + status.marketStream.subscribedCount + ')'],
+      ['user stream', status.userStream.state + ' (' + status.userStream.subscribedCount + ')'],
+      ['reconciliation', (status.reconciliation.running ? 'running' : 'stopped') + ' / pending ' + status.reconciliation.pendingTrades],
       ['kill switch', status.killSwitchActive ? (status.killSwitchReason || 'active') : 'inactive']
     ].map(([label, value]) => '<div class="stat"><span class="label">' + label + '</span><span class="value">' + value + '</span></div>').join('');
 

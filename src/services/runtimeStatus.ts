@@ -6,6 +6,29 @@ export interface WorkerRuntimeStatus {
     lastErrorAt?: number;
 }
 
+export interface StreamRuntimeStatus extends WorkerRuntimeStatus {
+    state: 'disabled' | 'idle' | 'connecting' | 'connected' | 'error';
+    endpoint?: string;
+    subscribedCount: number;
+    reconnectAttempts: number;
+    lastConnectAt?: number;
+    lastDisconnectAt?: number;
+    lastMessageAt?: number;
+    lastHeartbeatAt?: number;
+    lastPayloadSummary?: string;
+}
+
+export interface ReconciliationRuntimeStatus extends WorkerRuntimeStatus {
+    enabled: boolean;
+    scannedTrades: number;
+    pendingTrades: number;
+    queuedEvents: number;
+    reconciledTrades: number;
+    lastOrderId?: string;
+    lastEventType?: string;
+    lastEventStatus?: string;
+}
+
 export interface RuntimeStatus {
     startedAt: number;
     mode: 'preview' | 'live';
@@ -17,10 +40,30 @@ export interface RuntimeStatus {
     aggregationQueueDepth: number;
     monitor: WorkerRuntimeStatus;
     executor: WorkerRuntimeStatus;
+    marketStream: StreamRuntimeStatus;
+    userStream: StreamRuntimeStatus;
+    reconciliation: ReconciliationRuntimeStatus;
 }
 
 const createWorkerState = (): WorkerRuntimeStatus => ({
     running: false,
+});
+
+const createStreamState = (endpoint?: string): StreamRuntimeStatus => ({
+    running: false,
+    state: 'idle',
+    endpoint,
+    subscribedCount: 0,
+    reconnectAttempts: 0,
+});
+
+const createReconciliationState = (): ReconciliationRuntimeStatus => ({
+    running: false,
+    enabled: true,
+    scannedTrades: 0,
+    pendingTrades: 0,
+    queuedEvents: 0,
+    reconciledTrades: 0,
 });
 
 const runtimeStatus: RuntimeStatus = {
@@ -30,12 +73,18 @@ const runtimeStatus: RuntimeStatus = {
     aggregationQueueDepth: 0,
     monitor: createWorkerState(),
     executor: createWorkerState(),
+    marketStream: createStreamState(process.env.CLOB_WS_URL),
+    userStream: createStreamState(process.env.CLOB_WS_URL),
+    reconciliation: createReconciliationState(),
 };
 
 export const getRuntimeStatus = (): RuntimeStatus => ({
     ...runtimeStatus,
     monitor: { ...runtimeStatus.monitor },
     executor: { ...runtimeStatus.executor },
+    marketStream: { ...runtimeStatus.marketStream },
+    userStream: { ...runtimeStatus.userStream },
+    reconciliation: { ...runtimeStatus.reconciliation },
 });
 
 export const updateRuntimeStatus = (patch: Partial<RuntimeStatus>): RuntimeStatus => {
@@ -47,7 +96,19 @@ export const updateRuntimeStatus = (patch: Partial<RuntimeStatus>): RuntimeStatu
         Object.assign(runtimeStatus.executor, patch.executor);
     }
 
-    const { monitor, executor, ...topLevelPatch } = patch;
+    if (patch.marketStream) {
+        Object.assign(runtimeStatus.marketStream, patch.marketStream);
+    }
+
+    if (patch.userStream) {
+        Object.assign(runtimeStatus.userStream, patch.userStream);
+    }
+
+    if (patch.reconciliation) {
+        Object.assign(runtimeStatus.reconciliation, patch.reconciliation);
+    }
+
+    const { monitor, executor, marketStream, userStream, reconciliation, ...topLevelPatch } = patch;
     Object.assign(runtimeStatus, topLevelPatch);
 
     return getRuntimeStatus();
@@ -65,6 +126,29 @@ export const updateWorkerStatus = (
     return getRuntimeStatus();
 };
 
+export const updateStreamStatus = (
+    stream: 'marketStream' | 'userStream',
+    patch: Partial<StreamRuntimeStatus>
+): RuntimeStatus => {
+    runtimeStatus[stream] = {
+        ...runtimeStatus[stream],
+        ...patch,
+    };
+
+    return getRuntimeStatus();
+};
+
+export const updateReconciliationStatus = (
+    patch: Partial<ReconciliationRuntimeStatus>
+): RuntimeStatus => {
+    runtimeStatus.reconciliation = {
+        ...runtimeStatus.reconciliation,
+        ...patch,
+    };
+
+    return getRuntimeStatus();
+};
+
 export const resetRuntimeStatus = (): RuntimeStatus => {
     runtimeStatus.startedAt = Date.now();
     runtimeStatus.mode = process.env.PREVIEW_MODE === 'true' ? 'preview' : 'live';
@@ -76,6 +160,9 @@ export const resetRuntimeStatus = (): RuntimeStatus => {
     runtimeStatus.aggregationQueueDepth = 0;
     runtimeStatus.monitor = createWorkerState();
     runtimeStatus.executor = createWorkerState();
+    runtimeStatus.marketStream = createStreamState(process.env.CLOB_WS_URL);
+    runtimeStatus.userStream = createStreamState(process.env.CLOB_WS_URL);
+    runtimeStatus.reconciliation = createReconciliationState();
 
     return getRuntimeStatus();
 };

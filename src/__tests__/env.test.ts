@@ -1,4 +1,6 @@
 describe('env.ts configuration', () => {
+    let consoleErrorSpy: jest.SpyInstance;
+
     const baseEnv = {
         USER_ADDRESSES: '0x1234567890abcdef1234567890abcdef12345678',
         PROXY_WALLET: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
@@ -26,6 +28,13 @@ describe('env.ts configuration', () => {
             'MAX_ORDER_SIZE_USD',
             'MIN_ORDER_SIZE_USD',
             'PREVIEW_MODE',
+            'MARKET_WS_ENABLED',
+            'USER_WS_ENABLED',
+            'RECONCILIATION_ENABLED',
+            'STREAM_TARGET_REFRESH_INTERVAL_SECONDS',
+            'STREAM_HEARTBEAT_INTERVAL_SECONDS',
+            'RECONCILIATION_INTERVAL_SECONDS',
+            'RECONCILIATION_STALE_ORDER_SECONDS',
         ]) {
             delete process.env[key];
         }
@@ -34,11 +43,13 @@ describe('env.ts configuration', () => {
     beforeEach(() => {
         jest.resetModules();
         jest.doMock('dotenv', () => ({ config: jest.fn() }));
+        consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         resetEnv();
     });
 
     afterEach(() => {
         jest.dontMock('dotenv');
+        consoleErrorSpy.mockRestore();
         resetEnv();
     });
 
@@ -113,9 +124,20 @@ describe('env.ts configuration', () => {
     });
 
     test('parses numeric config correctly', () => {
-        const env = loadEnv({ FETCH_INTERVAL: '5', RETRY_LIMIT: '5' });
+        const env = loadEnv({
+            FETCH_INTERVAL: '5',
+            RETRY_LIMIT: '5',
+            STREAM_TARGET_REFRESH_INTERVAL_SECONDS: '20',
+            STREAM_HEARTBEAT_INTERVAL_SECONDS: '12',
+            RECONCILIATION_INTERVAL_SECONDS: '18',
+            RECONCILIATION_STALE_ORDER_SECONDS: '90',
+        });
         expect(env.FETCH_INTERVAL).toBe(5);
         expect(env.RETRY_LIMIT).toBe(5);
+        expect(env.STREAM_TARGET_REFRESH_INTERVAL_SECONDS).toBe(20);
+        expect(env.STREAM_HEARTBEAT_INTERVAL_SECONDS).toBe(12);
+        expect(env.RECONCILIATION_INTERVAL_SECONDS).toBe(18);
+        expect(env.RECONCILIATION_STALE_ORDER_SECONDS).toBe(90);
     });
 
     test('defaults work correctly', () => {
@@ -125,5 +147,12 @@ describe('env.ts configuration', () => {
         expect(env.TOO_OLD_TIMESTAMP).toBe(24);
         expect(env.TRADE_AGGREGATION_ENABLED).toBe(false);
         expect(env.PREVIEW_MODE).toBe(false);
+        expect(env.MARKET_WS_ENABLED).toBe(true);
+        expect(env.USER_WS_ENABLED).toBe(true);
+        expect(env.RECONCILIATION_ENABLED).toBe(true);
+        expect(env.STREAM_TARGET_REFRESH_INTERVAL_SECONDS).toBe(15);
+        expect(env.STREAM_HEARTBEAT_INTERVAL_SECONDS).toBe(10);
+        expect(env.RECONCILIATION_INTERVAL_SECONDS).toBe(15);
+        expect(env.RECONCILIATION_STALE_ORDER_SECONDS).toBe(60);
     });
 });
