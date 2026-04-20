@@ -67,6 +67,8 @@
   - `/api/status` now reports separate monitor and executor worker state
   - queue counts are derived from persisted trade records
   - kill switch state, last success, last error, and worker staleness are surfaced
+  - runtime risk telemetry now exposes equity source, balance/position snapshots, drawdown percentage, and consecutive error counters
+  - degraded live-mode equity snapshots no longer masquerade as trustworthy full-account equity
   - standalone `swagger` entrypoint now actually starts the server
 - Package and script truthfulness:
   - `start` now builds before launching the compiled app
@@ -76,6 +78,12 @@
   - `PREVIEW_MODE=true` no longer requires a live private key for the first validation pass
   - startup skips authenticated CLOB client initialization in preview mode
   - the starter `RPC_URL` was updated to a currently reachable public Polygon endpoint for local preview validation
+- Kill-switch hardening:
+  - executor now blocks live trading when only a balance-only fallback snapshot is available
+  - repeated degraded equity snapshots can now activate the kill switch instead of silently continuing
+  - repeated monitor fetch failures now accumulate into shared runtime risk state
+  - stale monitor heartbeats now trip the executor-side kill switch guard in live mode
+  - `.env.example` and env validation now include explicit kill-switch tuning controls for monitor errors, stale monitor heartbeats, and degraded equity snapshots
 - Docs and env truthfulness:
   - README and core docs now describe the actual local NeDB architecture
   - `.env.example` clearly separates preview-first guidance, preview/live requirements, and optional tuning
@@ -85,14 +93,15 @@
 - Tests:
   - DB wrapper safety tests expanded
   - env validation tests expanded for preview-mode behavior
-  - executor lifecycle tests expanded
+  - executor lifecycle tests now cover degraded equity snapshot and stale monitor kill-switch behavior
   - post-order persistence tests rewritten around normalized outcomes
 
 ## 4. What remains blocked
 
 - No websocket market/user stream or reconciliation layer yet
-- Kill switch is materially better than free-USDC-only, but it still depends on API-sourced balance/position values rather than a dedicated accounting engine
+- Kill switch now tracks fuller runtime risk and refuses degraded live-mode equity snapshots, but it still depends on API-sourced balance/position values rather than a dedicated accounting engine
 - No live-mode smoke test was executed because no real live trading credentials are committed in this branch
+- Secondary editorial cleanup is still pending in some non-core docs such as `docs/IMPROVEMENTS.md`, `docs/LOGGING_PREVIEW.md`, and translated README variants
 
 ## 5. Exact local verification commands to run next
 
@@ -103,6 +112,7 @@
    - keep `PREVIEW_MODE=true`
    - leave `PRIVATE_KEY` blank for preview mode
    - if `.env` already exists, compare it with `.env.example`
+   - review `KILL_SWITCH_EQUITY_FALLBACK_LIMIT`, `KILL_SWITCH_MONITOR_ERROR_LIMIT`, and `KILL_SWITCH_MONITOR_STALE_SECONDS` before live mode
 5. `npm run validate:handoff`
 6. `npm run health`
 7. `npm start`

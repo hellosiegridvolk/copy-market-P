@@ -168,11 +168,29 @@ app.get('/api/status', (_req, res) => {
     const monitorStale = runtime.monitor.running && isWorkerStale(runtime.monitor.lastLoopAt);
     const executorStale = runtime.executor.running && isWorkerStale(runtime.executor.lastLoopAt);
     const running = runtime.monitor.running || runtime.executor.running;
-    const healthy = running && !monitorStale && !executorStale && !runtime.killSwitchActive;
+    const degradedReasons: string[] = [];
+
+    if (monitorStale) degradedReasons.push('monitor_stale');
+    if (executorStale) degradedReasons.push('executor_stale');
+    if (runtime.risk.consecutiveMonitorErrors > 0) degradedReasons.push('monitor_errors');
+    if (runtime.risk.consecutiveExecutionErrors > 0) degradedReasons.push('execution_errors');
+    if (runtime.risk.consecutiveEquitySnapshotFailures > 0) {
+        degradedReasons.push('equity_snapshot_degraded');
+    }
+    if (
+        runtime.risk.equitySource === 'balance_only_fallback' ||
+        runtime.risk.equitySource === 'balance_unavailable'
+    ) {
+        degradedReasons.push('equity_snapshot_incomplete');
+    }
+
+    const healthy = running && degradedReasons.length === 0 && !runtime.killSwitchActive;
 
     res.json({
         running,
         healthy,
+        degraded: running && !healthy && !runtime.killSwitchActive,
+        degradedReasons,
         uptime: Math.floor((Date.now() - botStartTime) / 1000),
         mode: runtime.mode,
         previewMode: runtime.mode === 'preview',
@@ -199,6 +217,21 @@ app.get('/api/status', (_req, res) => {
             aggregationQueueDepth: runtime.aggregationQueueDepth || 0,
         },
         queue,
+        risk: {
+            currentEquity: runtime.risk.currentEquity ?? null,
+            freeBalance: runtime.risk.freeBalance ?? null,
+            openPositionValue: runtime.risk.openPositionValue ?? null,
+            dailyStartEquity: runtime.risk.dailyStartEquity ?? null,
+            dailyLossPct: runtime.risk.dailyLossPct ?? null,
+            equitySource: runtime.risk.equitySource,
+            lastEquityAt: runtime.risk.lastEquityAt ?? null,
+            lastEquityError: runtime.risk.lastEquityError ?? null,
+            lastEquityErrorAt: runtime.risk.lastEquityErrorAt ?? null,
+            consecutiveExecutionErrors: runtime.risk.consecutiveExecutionErrors,
+            consecutiveMonitorErrors: runtime.risk.consecutiveMonitorErrors,
+            consecutiveEquitySnapshotFailures:
+                runtime.risk.consecutiveEquitySnapshotFailures,
+        },
         dataFiles: dbFiles.length,
     });
 });
@@ -212,6 +245,15 @@ app.get('/api/config', (_req, res) => {
         fetchInterval: process.env.FETCH_INTERVAL || '1',
         slippageTolerance: process.env.SLIPPAGE_TOLERANCE || '0.05',
         dailyLossCap: process.env.DAILY_LOSS_CAP_PCT || '20',
+        killSwitchMaxErrors: process.env.KILL_SWITCH_MAX_ERRORS || '5',
+        killSwitchEquityFallbackLimit:
+            process.env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT || '3',
+        killSwitchMonitorErrorLimit:
+            process.env.KILL_SWITCH_MONITOR_ERROR_LIMIT ||
+            process.env.KILL_SWITCH_MAX_ERRORS ||
+            '5',
+        killSwitchMonitorStaleSeconds:
+            process.env.KILL_SWITCH_MONITOR_STALE_SECONDS || '15',
         previewMode: process.env.PREVIEW_MODE || 'false',
         tradeAggregation: process.env.TRADE_AGGREGATION_ENABLED || 'false',
         telegramEnabled: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID),
@@ -345,6 +387,8 @@ const formatSeconds = (seconds) => {
 };
 
 const formatTime = (value) => value ? new Date(value).toLocaleString() : 'n/a';
+const formatMoney = (value) => value === null || value === undefined ? 'n/a' : '$' + Number(value).toFixed(2);
+const formatPct = (value) => value === null || value === undefined ? 'n/a' : Number(value).toFixed(2) + '%';
 
 const badge = (label, tone) => '<span class="badge ' + tone + '">' + label + '</span>';
 
@@ -370,11 +414,18 @@ async function refresh() {
       ['mode', status.mode],
       ['last success', formatTime(status.lastSuccessAt)],
       ['last error', status.lastError || 'none'],
+      ['degraded reasons', status.degradedReasons && status.degradedReasons.length ? status.degradedReasons.join(', ') : 'none'],
       ['monitor', (status.monitor.running ? 'running' : 'stopped') + (status.monitor.stale ? ' (stale)' : '')],
       ['monitor heartbeat', formatTime(status.monitor.lastLoopAt)],
       ['executor', (status.executor.running ? 'running' : 'stopped') + (status.executor.stale ? ' (stale)' : '')],
       ['executor heartbeat', formatTime(status.executor.lastLoopAt)],
-      ['kill switch', status.killSwitchActive ? (status.killSwitchReason || 'active') : 'inactive']
+      ['kill switch', status.killSwitchActive ? (status.killSwitchReason || 'active') : 'inactive'],
+      ['equity source', status.risk.equitySource],
+      ['current equity', formatMoney(status.risk.currentEquity)],
+      ['free balance', formatMoney(status.risk.freeBalance)],
+      ['open positions', formatMoney(status.risk.openPositionValue)],
+      ['daily loss', formatPct(status.risk.dailyLossPct)],
+      ['risk counters', 'exec ' + status.risk.consecutiveExecutionErrors + ' / monitor ' + status.risk.consecutiveMonitorErrors + ' / equity ' + status.risk.consecutiveEquitySnapshotFailures]
     ].map(([label, value]) => '<div class="stat"><span class="label">' + label + '</span><span class="value">' + value + '</span></div>').join('');
 
     document.getElementById('config').innerHTML = Object.entries(config)

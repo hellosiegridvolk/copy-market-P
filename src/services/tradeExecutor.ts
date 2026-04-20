@@ -11,7 +11,14 @@ import getMyBalance from '../utils/getMyBalance';
 import postOrder, { TradeExecutionSummary } from '../utils/postOrder';
 import Logger from '../utils/logger';
 import telegram from '../utils/telegram';
-import { updateRuntimeStatus, updateWorkerStatus } from './runtimeStatus';
+import {
+    activateKillSwitch,
+    clearKillSwitch,
+    getRuntimeStatus,
+    updateRiskStatus,
+    updateRuntimeStatus,
+    updateWorkerStatus,
+} from './runtimeStatus';
 
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const PROXY_WALLET = ENV.PROXY_WALLET;
@@ -19,14 +26,18 @@ const RETRY_LIMIT = ENV.RETRY_LIMIT;
 const TRADE_AGGREGATION_ENABLED = ENV.TRADE_AGGREGATION_ENABLED;
 const TRADE_AGGREGATION_WINDOW_SECONDS = ENV.TRADE_AGGREGATION_WINDOW_SECONDS;
 const TRADE_AGGREGATION_MIN_TOTAL_USD = 1.0;
-const PREVIEW_MODE = process.env.PREVIEW_MODE === 'true';
-const DAILY_LOSS_CAP_PCT = parseFloat(process.env.DAILY_LOSS_CAP_PCT || '20');
-const MAX_EXECUTION_ERRORS = parseInt(process.env.KILL_SWITCH_MAX_ERRORS || '5', 10);
+const PREVIEW_MODE = ENV.PREVIEW_MODE;
+const DAILY_LOSS_CAP_PCT = ENV.DAILY_LOSS_CAP_PCT;
+const MAX_EXECUTION_ERRORS = ENV.KILL_SWITCH_MAX_ERRORS;
+const MAX_EQUITY_SNAPSHOT_FAILURES = ENV.KILL_SWITCH_EQUITY_FALLBACK_LIMIT;
+const MAX_MONITOR_ERRORS = ENV.KILL_SWITCH_MONITOR_ERROR_LIMIT;
+const MONITOR_STALE_THRESHOLD_MS = ENV.KILL_SWITCH_MONITOR_STALE_SECONDS * 1000;
 
 let dailyStartEquity: number | null = null;
 let dailyStartDate = '';
 let killSwitchTriggered = false;
 let consecutiveExecutionErrors = 0;
+let consecutiveEquitySnapshotFailures = 0;
 let isRunning = true;
 
 const TERMINAL_STATUSES = new Set<TradeLifecycleStatus>([
@@ -58,6 +69,16 @@ interface AggregatedTrade {
     totalUsdcSize: number;
     averagePrice: number;
     firstTradeTime: number;
+}
+
+interface AccountEquitySnapshot {
+    currentEquity: number;
+    freeBalance: number;
+    openPositionValue?: number;
+    source: 'balance_plus_positions' | 'balance_only_fallback';
+    capturedAt: number;
+    degraded: boolean;
+    errorMessage?: string;
 }
 
 const tradeAggregationBuffer: Map<string, AggregatedTrade> = new Map();
@@ -106,38 +127,150 @@ const persistTradeStatus = async (
     Object.assign(trade, patch);
 };
 
-const getAccountEquity = async (): Promise<number> => {
-    const freeBalance = await getMyBalance(PROXY_WALLET);
+const setKillSwitch = (reason: string) => {
+    killSwitchTriggered = true;
+    activateKillSwitch(reason);
+};
+
+const getAccountEquitySnapshot = async (): Promise<AccountEquitySnapshot | null> => {
+    const capturedAt = Date.now();
 
     try {
-        const myPositions: UserPositionInterface[] = await fetchData(
-            `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
-        );
-        const openPositionValue = Array.isArray(myPositions)
-            ? myPositions.reduce(
-                  (sum, position) => sum + (Number(position.currentValue) || 0),
-                  0
-              )
-            : 0;
-        return freeBalance + openPositionValue;
+        const freeBalance = await getMyBalance(PROXY_WALLET);
+
+        try {
+            const myPositions: UserPositionInterface[] = await fetchData(
+                `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
+            );
+            const openPositionValue = Array.isArray(myPositions)
+                ? myPositions.reduce(
+                      (sum, position) => sum + (Number(position.currentValue) || 0),
+                      0
+                  )
+                : 0;
+            const currentEquity = freeBalance + openPositionValue;
+
+            consecutiveEquitySnapshotFailures = 0;
+            updateRiskStatus({
+                currentEquity,
+                freeBalance,
+                openPositionValue,
+                equitySource: 'balance_plus_positions',
+                lastEquityAt: capturedAt,
+                lastEquityError: undefined,
+                lastEquityErrorAt: undefined,
+                consecutiveEquitySnapshotFailures,
+            });
+
+            return {
+                currentEquity,
+                freeBalance,
+                openPositionValue,
+                source: 'balance_plus_positions',
+                capturedAt,
+                degraded: false,
+            };
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : `unknown positions fetch error: ${String(error)}`;
+
+            consecutiveEquitySnapshotFailures += 1;
+            updateRiskStatus({
+                currentEquity: freeBalance,
+                freeBalance,
+                openPositionValue: undefined,
+                equitySource: 'balance_only_fallback',
+                lastEquityAt: capturedAt,
+                lastEquityError: message,
+                lastEquityErrorAt: capturedAt,
+                consecutiveEquitySnapshotFailures,
+            });
+
+            Logger.warning(
+                `Kill switch equity snapshot degraded; positions were unavailable: ${message}`
+            );
+
+            if (!PREVIEW_MODE) {
+                if (consecutiveEquitySnapshotFailures >= MAX_EQUITY_SNAPSHOT_FAILURES) {
+                    setKillSwitch('equity_snapshot_degraded');
+                }
+
+                return null;
+            }
+
+            return {
+                currentEquity: freeBalance,
+                freeBalance,
+                source: 'balance_only_fallback',
+                capturedAt,
+                degraded: true,
+                errorMessage: message,
+            };
+        }
     } catch (error) {
-        Logger.warning(
-            `Falling back to free balance for kill switch equity check: ${
-                error instanceof Error ? error.message : String(error)
-            }`
-        );
-        return freeBalance;
+        const message =
+            error instanceof Error
+                ? error.message
+                : `unknown balance fetch error: ${String(error)}`;
+
+        consecutiveEquitySnapshotFailures += 1;
+        updateRiskStatus({
+            currentEquity: undefined,
+            freeBalance: undefined,
+            openPositionValue: undefined,
+            equitySource: 'balance_unavailable',
+            lastEquityAt: capturedAt,
+            lastEquityError: message,
+            lastEquityErrorAt: capturedAt,
+            consecutiveEquitySnapshotFailures,
+        });
+
+        Logger.warning(`Kill switch equity snapshot failed: ${message}`);
+
+        if (!PREVIEW_MODE && consecutiveEquitySnapshotFailures >= MAX_EQUITY_SNAPSHOT_FAILURES) {
+            setKillSwitch('equity_snapshot_unavailable');
+        }
+
+        return null;
     }
 };
 
-const setKillSwitch = (reason: string) => {
-    killSwitchTriggered = true;
-    updateRuntimeStatus({ killSwitchActive: true, killSwitchReason: reason });
+const checkMonitorHealth = (): boolean => {
+    const runtime = getRuntimeStatus();
+
+    if (runtime.killSwitchActive) {
+        killSwitchTriggered = true;
+        return false;
+    }
+
+    if (runtime.risk.consecutiveMonitorErrors >= MAX_MONITOR_ERRORS) {
+        setKillSwitch('too_many_monitor_errors');
+        return false;
+    }
+
+    if (
+        runtime.monitor.running &&
+        runtime.monitor.lastLoopAt &&
+        Date.now() - runtime.monitor.lastLoopAt > MONITOR_STALE_THRESHOLD_MS
+    ) {
+        setKillSwitch('monitor_worker_stale');
+        return false;
+    }
+
+    return true;
 };
 
 const checkDailyLoss = async (): Promise<boolean> => {
     const today = new Date().toISOString().split('T')[0];
-    const currentEquity = await getAccountEquity();
+    const snapshot = await getAccountEquitySnapshot();
+
+    if (!snapshot) {
+        return false;
+    }
+
+    const currentEquity = snapshot.currentEquity;
 
     if (dailyStartDate !== today) {
         dailyStartDate = today;
@@ -146,19 +279,50 @@ const checkDailyLoss = async (): Promise<boolean> => {
 
     if (dailyStartEquity !== null && dailyStartEquity > 0) {
         const lossPct = ((dailyStartEquity - currentEquity) / dailyStartEquity) * 100;
+        updateRiskStatus({
+            dailyStartEquity,
+            dailyLossPct: Number(lossPct.toFixed(4)),
+        });
+
         if (lossPct >= DAILY_LOSS_CAP_PCT) {
             const reason = `daily_equity_drawdown_${lossPct.toFixed(2)}pct`;
             setKillSwitch(reason);
             telegram.killSwitch(lossPct);
             return false;
         }
+    } else {
+        updateRiskStatus({
+            dailyStartEquity: dailyStartEquity ?? undefined,
+            dailyLossPct: 0,
+        });
     }
+
     return true;
+};
+
+const canExecuteTrade = async (): Promise<boolean> => {
+    if (killSwitchTriggered || getRuntimeStatus().killSwitchActive) {
+        killSwitchTriggered = true;
+        return false;
+    }
+
+    if (PREVIEW_MODE) {
+        return true;
+    }
+
+    if (!checkMonitorHealth()) {
+        return false;
+    }
+
+    return checkDailyLoss();
 };
 
 const markExecutionSuccess = () => {
     consecutiveExecutionErrors = 0;
     const successAt = Date.now();
+    updateRiskStatus({
+        consecutiveExecutionErrors,
+    });
     updateWorkerStatus('executor', {
         lastSuccessAt: successAt,
         lastError: undefined,
@@ -174,6 +338,9 @@ const markExecutionSuccess = () => {
 const markExecutionFailure = (message: string) => {
     consecutiveExecutionErrors += 1;
     const errorAt = Date.now();
+    updateRiskStatus({
+        consecutiveExecutionErrors,
+    });
 
     updateWorkerStatus('executor', {
         lastError: message,
@@ -328,7 +495,7 @@ const applyAggregatedSummary = async (
 };
 
 const executeSingleTrade = async (clobClient: ClobClient | null, trade: TradeWithUser) => {
-    if (killSwitchTriggered || !(await checkDailyLoss())) return;
+    if (!(await canExecuteTrade())) return;
 
     await persistTradeStatus(trade, 'processing', {
         bot: false,
@@ -403,7 +570,7 @@ const doAggregatedTrading = async (
     aggregatedTrades: AggregatedTrade[]
 ) => {
     for (const aggregation of aggregatedTrades) {
-        if (killSwitchTriggered || !(await checkDailyLoss())) return;
+        if (!(await canExecuteTrade())) return;
 
         for (const trade of aggregation.trades) {
             await persistTradeStatus(trade, 'processing', {
@@ -489,13 +656,28 @@ const tradeExecutor = async (clobClient: ClobClient | null) => {
     isRunning = true;
     killSwitchTriggered = false;
     consecutiveExecutionErrors = 0;
+    consecutiveEquitySnapshotFailures = 0;
     dailyStartEquity = null;
     dailyStartDate = '';
+    clearKillSwitch();
     updateRuntimeStatus({
         mode: PREVIEW_MODE ? 'preview' : 'live',
-        killSwitchActive: false,
-        killSwitchReason: undefined,
+        lastError: undefined,
+        lastErrorAt: undefined,
         aggregationQueueDepth: tradeAggregationBuffer.size,
+    });
+    updateRiskStatus({
+        currentEquity: undefined,
+        freeBalance: undefined,
+        openPositionValue: undefined,
+        dailyStartEquity: undefined,
+        dailyLossPct: undefined,
+        equitySource: 'unknown',
+        lastEquityAt: undefined,
+        lastEquityError: undefined,
+        lastEquityErrorAt: undefined,
+        consecutiveExecutionErrors: 0,
+        consecutiveEquitySnapshotFailures: 0,
     });
     updateWorkerStatus('executor', {
         running: true,
