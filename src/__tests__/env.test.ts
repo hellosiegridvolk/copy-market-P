@@ -40,6 +40,7 @@ describe('env.ts configuration', () => {
             'KILL_SWITCH_EQUITY_FALLBACK_LIMIT',
             'KILL_SWITCH_MONITOR_ERROR_LIMIT',
             'KILL_SWITCH_MONITOR_STALE_SECONDS',
+            'KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT',
         ]) {
             delete process.env[key];
         }
@@ -140,6 +141,7 @@ describe('env.ts configuration', () => {
             KILL_SWITCH_EQUITY_FALLBACK_LIMIT: '4',
             KILL_SWITCH_MONITOR_ERROR_LIMIT: '6',
             KILL_SWITCH_MONITOR_STALE_SECONDS: '30',
+            KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT: '125',
         });
         expect(env.FETCH_INTERVAL).toBe(5);
         expect(env.RETRY_LIMIT).toBe(5);
@@ -151,6 +153,7 @@ describe('env.ts configuration', () => {
         expect(env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT).toBe(4);
         expect(env.KILL_SWITCH_MONITOR_ERROR_LIMIT).toBe(6);
         expect(env.KILL_SWITCH_MONITOR_STALE_SECONDS).toBe(30);
+        expect(env.KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT).toBe(125);
     });
 
     test('defaults work correctly', () => {
@@ -172,5 +175,6 @@ describe('env.ts configuration', () => {
         expect(env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT).toBe(3);
         expect(env.KILL_SWITCH_MONITOR_ERROR_LIMIT).toBe(5);
         expect(env.KILL_SWITCH_MONITOR_STALE_SECONDS).toBe(15);
+        expect(env.KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT).toBe(100);
     });
 });

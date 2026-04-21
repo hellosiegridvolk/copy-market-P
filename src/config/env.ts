@@ -202,6 +202,19 @@ const validateNumericConfig = (): void => {
         );
     }
 
+    const killSwitchPendingExposureLimitPct = parseFloat(
+        process.env.KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT || '100'
+    );
+    if (
+        isNaN(killSwitchPendingExposureLimitPct) ||
+        killSwitchPendingExposureLimitPct < 50 ||
+        killSwitchPendingExposureLimitPct > 500
+    ) {
+        throw new Error(
+            `Invalid KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT: ${process.env.KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT}. Must be between 50 and 500.`
+        );
+    }
+
     const aggregationWindowSeconds = parseInt(
         process.env.TRADE_AGGREGATION_WINDOW_SECONDS || '300',
         10
@@ -421,6 +434,9 @@ export const ENV = {
     KILL_SWITCH_MONITOR_STALE_SECONDS: parseInt(
         process.env.KILL_SWITCH_MONITOR_STALE_SECONDS || '15',
         10
+    ),
+    KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT: parseFloat(
+        process.env.KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT || '100'
     ),
     COPY_STRATEGY_CONFIG: parseCopyStrategy(),
     REQUEST_TIMEOUT_MS: parseInt(process.env.REQUEST_TIMEOUT_MS || '10000', 10),

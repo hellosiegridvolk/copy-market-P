@@ -21,6 +21,7 @@
 - `src/services/tradeMonitor.ts`
 - `src/services/tradeExecutor.ts`
 - `src/services/runtimeStatus.ts`
+- `src/services/accounting.ts`
 - `src/utils/postOrder.ts`
 - `src/utils/healthCheck.ts`
 - `src/scripts/healthCheck.ts`
@@ -30,6 +31,7 @@
 - `src/__tests__/env.test.ts`
 - `src/__tests__/postOrder.test.ts`
 - `src/__tests__/tradeExecutor.lifecycle.test.ts`
+- `src/__tests__/accounting.test.ts`
 - `docs/QUICK_START.md`
 - `docs/GETTING_STARTED.md`
 - `docs/DEPLOYMENT.md`
@@ -87,6 +89,8 @@
   - repeated degraded equity snapshots can now activate the kill switch instead of silently continuing
   - repeated monitor fetch failures now accumulate into shared runtime risk state
   - stale monitor heartbeats now trip the executor-side kill switch guard in live mode
+  - local pending buy exposure is now reserved into the runtime risk snapshot so the kill switch can stop execution when local commitments outrun free USDC
+  - `/api/status` now surfaces the local pending-exposure overlay so operators can see reserved buy exposure and available balance after pending local commitments
   - `.env.example` and env validation now include explicit kill-switch tuning controls for monitor errors, stale monitor heartbeats, and degraded equity snapshots
 - Docs and env truthfulness:
   - README and core docs now describe the actual local NeDB architecture
@@ -104,8 +108,8 @@
 
 ## 4. What remains blocked
 
-- No websocket market/user stream or reconciliation layer yet
-- Kill switch now tracks fuller runtime risk and refuses degraded live-mode equity snapshots, but it still depends on API-sourced balance/position values rather than a dedicated accounting engine
+- Websocket and reconciliation groundwork is merged, but it is still not a full replay/recovery engine
+- Kill switch now tracks local pending exposure as well as runtime risk, but it still depends on API-sourced balance/position values rather than a full independent accounting engine
 - No live order-placement smoke test was executed; validation in this branch stopped at authenticated preflight plus a short live startup/status smoke
 - Secondary editorial cleanup is still pending in some non-core docs such as `docs/IMPROVEMENTS.md`, `docs/LOGGING_PREVIEW.md`, and translated README variants
 
@@ -132,6 +136,7 @@
 - `npm run validate:handoff`
 - `npm run health`
 - `npm run build`
+- `npm test -- --runInBand`
 - `npx jest src/__tests__/statusRoute.test.ts src/__tests__/tradeMonitor.bootstrap.test.ts src/__tests__/tradeExecutor.lifecycle.test.ts --runInBand`
 - Preview-mode startup smoke test using the local starter `.env`
   - `GET /api/health` returned `200`

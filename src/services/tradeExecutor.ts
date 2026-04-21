@@ -12,6 +12,12 @@ import postOrder, { TradeExecutionSummary } from '../utils/postOrder';
 import Logger from '../utils/logger';
 import telegram from '../utils/telegram';
 import {
+    BufferedTradeExposure,
+    LocalAccountingSnapshot,
+    exceedsPendingBuyExposureLimit,
+    summarizeLocalAccounting,
+} from './accounting';
+import {
     activateKillSwitch,
     clearKillSwitch,
     getRuntimeStatus,
@@ -32,6 +38,7 @@ const MAX_EXECUTION_ERRORS = ENV.KILL_SWITCH_MAX_ERRORS;
 const MAX_EQUITY_SNAPSHOT_FAILURES = ENV.KILL_SWITCH_EQUITY_FALLBACK_LIMIT;
 const MAX_MONITOR_ERRORS = ENV.KILL_SWITCH_MONITOR_ERROR_LIMIT;
 const MONITOR_STALE_THRESHOLD_MS = ENV.KILL_SWITCH_MONITOR_STALE_SECONDS * 1000;
+const MAX_PENDING_EXPOSURE_LIMIT_PCT = ENV.KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT;
 
 let dailyStartEquity: number | null = null;
 let dailyStartDate = '';
@@ -79,9 +86,25 @@ interface AccountEquitySnapshot {
     capturedAt: number;
     degraded: boolean;
     errorMessage?: string;
+    availableBalanceAfterPending: number;
+    reservedBuyExposure: number;
+    pendingSellExposure: number;
 }
 
 const tradeAggregationBuffer: Map<string, AggregatedTrade> = new Map();
+
+const EMPTY_ACCOUNTING_SNAPSHOT: LocalAccountingSnapshot = {
+    accountingMode: 'api_plus_local_pending',
+    queuedBuyExposure: 0,
+    processingBuyExposure: 0,
+    retryableBuyExposure: 0,
+    bufferedBuyExposure: 0,
+    reservedBuyExposure: 0,
+    pendingSellExposure: 0,
+    activePendingTradeCount: 0,
+    activePendingBuyCount: 0,
+    bufferedTradeCount: 0,
+};
 
 const getLifecycleBase = (trade: TradeWithUser) =>
     compactRecord({
@@ -132,11 +155,33 @@ const setKillSwitch = (reason: string) => {
     activateKillSwitch(reason);
 };
 
-const getAccountEquitySnapshot = async (): Promise<AccountEquitySnapshot | null> => {
+const getAccountEquitySnapshot = async (
+    localAccountingSnapshot: LocalAccountingSnapshot = EMPTY_ACCOUNTING_SNAPSHOT
+): Promise<AccountEquitySnapshot | null> => {
     const capturedAt = Date.now();
 
     try {
         const freeBalance = await getMyBalance(PROXY_WALLET);
+        const availableBalanceAfterPending = Number(
+            (freeBalance - localAccountingSnapshot.reservedBuyExposure).toFixed(4)
+        );
+
+        if (
+            !PREVIEW_MODE &&
+            exceedsPendingBuyExposureLimit(
+                freeBalance,
+                localAccountingSnapshot,
+                MAX_PENDING_EXPOSURE_LIMIT_PCT
+            )
+        ) {
+            updateRiskStatus({
+                freeBalance,
+                availableBalanceAfterPending,
+                lastEquityAt: capturedAt,
+            });
+            setKillSwitch('pending_buy_exposure_exceeds_free_balance');
+            return null;
+        }
 
         try {
             const myPositions: UserPositionInterface[] = await fetchData(
@@ -156,6 +201,7 @@ const getAccountEquitySnapshot = async (): Promise<AccountEquitySnapshot | null>
                 freeBalance,
                 openPositionValue,
                 equitySource: 'balance_plus_positions',
+                availableBalanceAfterPending,
                 lastEquityAt: capturedAt,
                 lastEquityError: undefined,
                 lastEquityErrorAt: undefined,
@@ -169,6 +215,9 @@ const getAccountEquitySnapshot = async (): Promise<AccountEquitySnapshot | null>
                 source: 'balance_plus_positions',
                 capturedAt,
                 degraded: false,
+                availableBalanceAfterPending,
+                reservedBuyExposure: localAccountingSnapshot.reservedBuyExposure,
+                pendingSellExposure: localAccountingSnapshot.pendingSellExposure,
             };
         } catch (error) {
             const message =
@@ -182,6 +231,7 @@ const getAccountEquitySnapshot = async (): Promise<AccountEquitySnapshot | null>
                 freeBalance,
                 openPositionValue: undefined,
                 equitySource: 'balance_only_fallback',
+                availableBalanceAfterPending,
                 lastEquityAt: capturedAt,
                 lastEquityError: message,
                 lastEquityErrorAt: capturedAt,
@@ -207,6 +257,9 @@ const getAccountEquitySnapshot = async (): Promise<AccountEquitySnapshot | null>
                 capturedAt,
                 degraded: true,
                 errorMessage: message,
+                availableBalanceAfterPending,
+                reservedBuyExposure: localAccountingSnapshot.reservedBuyExposure,
+                pendingSellExposure: localAccountingSnapshot.pendingSellExposure,
             };
         }
     } catch (error) {
@@ -221,6 +274,7 @@ const getAccountEquitySnapshot = async (): Promise<AccountEquitySnapshot | null>
             freeBalance: undefined,
             openPositionValue: undefined,
             equitySource: 'balance_unavailable',
+            availableBalanceAfterPending: undefined,
             lastEquityAt: capturedAt,
             lastEquityError: message,
             lastEquityErrorAt: capturedAt,
@@ -272,9 +326,11 @@ const checkMonitorHealth = (): boolean => {
     return true;
 };
 
-const checkDailyLoss = async (): Promise<boolean> => {
+const checkDailyLoss = async (
+    localAccountingSnapshot: LocalAccountingSnapshot
+): Promise<boolean> => {
     const today = new Date().toISOString().split('T')[0];
-    const snapshot = await getAccountEquitySnapshot();
+    const snapshot = await getAccountEquitySnapshot(localAccountingSnapshot);
 
     if (!snapshot) {
         return false;
@@ -310,7 +366,9 @@ const checkDailyLoss = async (): Promise<boolean> => {
     return true;
 };
 
-const canExecuteTrade = async (): Promise<boolean> => {
+const canExecuteTrade = async (
+    localAccountingSnapshot: LocalAccountingSnapshot = EMPTY_ACCOUNTING_SNAPSHOT
+): Promise<boolean> => {
     if (killSwitchTriggered || getRuntimeStatus().killSwitchActive) {
         killSwitchTriggered = true;
         return false;
@@ -324,7 +382,7 @@ const canExecuteTrade = async (): Promise<boolean> => {
         return false;
     }
 
-    return checkDailyLoss();
+    return checkDailyLoss(localAccountingSnapshot);
 };
 
 const markExecutionSuccess = () => {
@@ -392,6 +450,28 @@ const readTempTrades = async (): Promise<TradeWithUser[]> => {
     }
 
     return allTrades;
+};
+
+const getBufferedTradeExposure = (): BufferedTradeExposure[] =>
+    Array.from(tradeAggregationBuffer.values()).map((aggregation) => ({
+        side: aggregation.side,
+        totalUsdcSize: aggregation.totalUsdcSize,
+        tradeCount: aggregation.trades.length,
+    }));
+
+const pushAccountingRiskSnapshot = (snapshot: LocalAccountingSnapshot) => {
+    updateRiskStatus({
+        accountingMode: snapshot.accountingMode,
+        queuedBuyExposure: Number(snapshot.queuedBuyExposure.toFixed(4)),
+        processingBuyExposure: Number(snapshot.processingBuyExposure.toFixed(4)),
+        retryableBuyExposure: Number(snapshot.retryableBuyExposure.toFixed(4)),
+        bufferedBuyExposure: Number(snapshot.bufferedBuyExposure.toFixed(4)),
+        reservedBuyExposure: Number(snapshot.reservedBuyExposure.toFixed(4)),
+        pendingSellExposure: Number(snapshot.pendingSellExposure.toFixed(4)),
+        activePendingTradeCount: snapshot.activePendingTradeCount,
+        activePendingBuyCount: snapshot.activePendingBuyCount,
+        bufferedTradeCount: snapshot.bufferedTradeCount,
+    });
 };
 
 const getAggregationKey = (trade: TradeWithUser): string =>
@@ -504,8 +584,12 @@ const applyAggregatedSummary = async (
     }
 };
 
-const executeSingleTrade = async (clobClient: ClobClient | null, trade: TradeWithUser) => {
-    if (!(await canExecuteTrade())) return;
+const executeSingleTrade = async (
+    clobClient: ClobClient | null,
+    trade: TradeWithUser,
+    localAccountingSnapshot: LocalAccountingSnapshot
+) => {
+    if (!(await canExecuteTrade(localAccountingSnapshot))) return;
 
     await persistTradeStatus(trade, 'processing', {
         bot: false,
@@ -569,18 +653,23 @@ const executeSingleTrade = async (clobClient: ClobClient | null, trade: TradeWit
     }
 };
 
-const doTrading = async (clobClient: ClobClient | null, trades: TradeWithUser[]) => {
+const doTrading = async (
+    clobClient: ClobClient | null,
+    trades: TradeWithUser[],
+    localAccountingSnapshot: LocalAccountingSnapshot
+) => {
     for (const trade of trades) {
-        await executeSingleTrade(clobClient, trade);
+        await executeSingleTrade(clobClient, trade, localAccountingSnapshot);
     }
 };
 
 const doAggregatedTrading = async (
     clobClient: ClobClient | null,
-    aggregatedTrades: AggregatedTrade[]
+    aggregatedTrades: AggregatedTrade[],
+    localAccountingSnapshot: LocalAccountingSnapshot
 ) => {
     for (const aggregation of aggregatedTrades) {
-        if (!(await canExecuteTrade())) return;
+        if (!(await canExecuteTrade(localAccountingSnapshot))) return;
 
         for (const trade of aggregation.trades) {
             await persistTradeStatus(trade, 'processing', {
@@ -683,6 +772,17 @@ const tradeExecutor = async (clobClient: ClobClient | null) => {
         dailyStartEquity: undefined,
         dailyLossPct: undefined,
         equitySource: 'unknown',
+        accountingMode: 'unknown',
+        queuedBuyExposure: 0,
+        processingBuyExposure: 0,
+        retryableBuyExposure: 0,
+        bufferedBuyExposure: 0,
+        reservedBuyExposure: 0,
+        pendingSellExposure: 0,
+        availableBalanceAfterPending: undefined,
+        activePendingTradeCount: 0,
+        activePendingBuyCount: 0,
+        bufferedTradeCount: 0,
         lastEquityAt: undefined,
         lastEquityError: undefined,
         lastEquityErrorAt: undefined,
@@ -701,22 +801,31 @@ const tradeExecutor = async (clobClient: ClobClient | null) => {
             updateWorkerStatus('executor', { lastLoopAt: Date.now() });
             updateRuntimeStatus({ aggregationQueueDepth: tradeAggregationBuffer.size });
             const trades = await readTempTrades();
+            const localAccountingSnapshot = summarizeLocalAccounting(
+                trades,
+                getBufferedTradeExposure()
+            );
+            pushAccountingRiskSnapshot(localAccountingSnapshot);
 
             if (TRADE_AGGREGATION_ENABLED) {
                 for (const trade of trades) {
                     if (trade.side === 'BUY' && trade.usdcSize < TRADE_AGGREGATION_MIN_TOTAL_USD) {
                         addToAggregationBuffer(trade);
                     } else {
-                        await doTrading(clobClient, [trade]);
+                        await doTrading(clobClient, [trade], localAccountingSnapshot);
                     }
                 }
 
                 const readyAggregations = await getReadyAggregatedTrades();
                 if (readyAggregations.length > 0) {
-                    await doAggregatedTrading(clobClient, readyAggregations);
+                    await doAggregatedTrading(
+                        clobClient,
+                        readyAggregations,
+                        localAccountingSnapshot
+                    );
                 }
             } else if (trades.length > 0) {
-                await doTrading(clobClient, trades);
+                await doTrading(clobClient, trades, localAccountingSnapshot);
             }
 
             updateRuntimeStatus({ aggregationQueueDepth: tradeAggregationBuffer.size });

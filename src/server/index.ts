@@ -244,6 +244,12 @@ app.get('/api/status', (_req, res) => {
     ) {
         degradedReasons.push('equity_snapshot_incomplete');
     }
+    if (
+        typeof runtime.risk.availableBalanceAfterPending === 'number' &&
+        runtime.risk.availableBalanceAfterPending < 0
+    ) {
+        degradedReasons.push('pending_exposure_over_limit');
+    }
 
     const healthy =
         runtime.monitor.running &&
@@ -333,6 +339,17 @@ app.get('/api/status', (_req, res) => {
             dailyStartEquity: runtime.risk.dailyStartEquity ?? null,
             dailyLossPct: runtime.risk.dailyLossPct ?? null,
             equitySource: runtime.risk.equitySource,
+            accountingMode: runtime.risk.accountingMode,
+            queuedBuyExposure: runtime.risk.queuedBuyExposure,
+            processingBuyExposure: runtime.risk.processingBuyExposure,
+            retryableBuyExposure: runtime.risk.retryableBuyExposure,
+            bufferedBuyExposure: runtime.risk.bufferedBuyExposure,
+            reservedBuyExposure: runtime.risk.reservedBuyExposure,
+            pendingSellExposure: runtime.risk.pendingSellExposure,
+            availableBalanceAfterPending: runtime.risk.availableBalanceAfterPending ?? null,
+            activePendingTradeCount: runtime.risk.activePendingTradeCount,
+            activePendingBuyCount: runtime.risk.activePendingBuyCount,
+            bufferedTradeCount: runtime.risk.bufferedTradeCount,
             lastEquityAt: runtime.risk.lastEquityAt ?? null,
             lastEquityError: runtime.risk.lastEquityError ?? null,
             lastEquityErrorAt: runtime.risk.lastEquityErrorAt ?? null,
@@ -363,6 +380,8 @@ app.get('/api/config', (_req, res) => {
             '5',
         killSwitchMonitorStaleSeconds:
             process.env.KILL_SWITCH_MONITOR_STALE_SECONDS || '15',
+        killSwitchPendingExposureLimitPct:
+            process.env.KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT || '100',
         previewMode: process.env.PREVIEW_MODE || 'false',
         tradeAggregation: process.env.TRADE_AGGREGATION_ENABLED || 'false',
         marketWsEnabled: process.env.MARKET_WS_ENABLED ?? 'true',
@@ -538,8 +557,11 @@ async function refresh() {
       ['executor heartbeat', formatTime(status.executor.lastLoopAt)],
       ['kill switch', status.killSwitchActive ? (status.killSwitchReason || 'active') : 'inactive'],
       ['equity source', status.risk.equitySource],
+      ['accounting mode', status.risk.accountingMode],
       ['current equity', formatMoney(status.risk.currentEquity)],
       ['free balance', formatMoney(status.risk.freeBalance)],
+      ['reserved buy exposure', formatMoney(status.risk.reservedBuyExposure)],
+      ['available after pending', formatMoney(status.risk.availableBalanceAfterPending)],
       ['open positions', formatMoney(status.risk.openPositionValue)],
       ['daily loss', formatPct(status.risk.dailyLossPct)],
       ['risk counters', 'exec ' + status.risk.consecutiveExecutionErrors + ' / monitor ' + status.risk.consecutiveMonitorErrors + ' / equity ' + status.risk.consecutiveEquitySnapshotFailures],
