@@ -1,6 +1,8 @@
 import connectDB, { closeDB } from './config/db';
 import { ENV } from './config/env';
 import createClobClient from './utils/createClobClient';
+import { stopPolymarketStreams, startPolymarketStreams } from './services/polymarketStreams';
+import { startTradeReconciliation, stopTradeReconciliation } from './services/reconciliation';
 import tradeExecutor, { stopTradeExecutor } from './services/tradeExecutor';
 import tradeMonitor, { stopTradeMonitor } from './services/tradeMonitor';
 import { startServer } from './server';
@@ -26,6 +28,8 @@ const gracefulShutdown = async (signal: string) => {
     try {
         stopTradeMonitor();
         stopTradeExecutor();
+        stopPolymarketStreams();
+        stopTradeReconciliation();
 
         Logger.info('Waiting for services to finish current operations...');
         await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -116,6 +120,12 @@ export const main = async () => {
 
         Logger.info('Starting trade executor...');
         tradeExecutor(clobClient);
+
+        Logger.info('Starting websocket groundwork...');
+        startPolymarketStreams(clobClient);
+
+        Logger.info('Starting reconciliation worker...');
+        startTradeReconciliation(clobClient);
 
         startServer();
     } catch (error) {

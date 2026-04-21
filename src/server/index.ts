@@ -204,7 +204,14 @@ app.get('/api/status', (_req, res) => {
     const executorStale = runtime.executor.running && isWorkerStale(runtime.executor.lastLoopAt);
     const monitorHeartbeatMissing = runtime.monitor.running && !runtime.monitor.lastLoopAt;
     const executorHeartbeatMissing = runtime.executor.running && !runtime.executor.lastLoopAt;
-    const running = runtime.monitor.running || runtime.executor.running;
+    const streamDegraded =
+        runtime.marketStream.state === 'error' || runtime.userStream.state === 'error';
+    const running =
+        runtime.monitor.running ||
+        runtime.executor.running ||
+        runtime.marketStream.running ||
+        runtime.userStream.running ||
+        runtime.reconciliation.running;
     const degradedReasons: string[] = [];
 
     if (!runtime.monitor.running) degradedReasons.push('monitor_stopped');
@@ -213,6 +220,19 @@ app.get('/api/status', (_req, res) => {
     if (executorStale) degradedReasons.push('executor_stale');
     if (monitorHeartbeatMissing) degradedReasons.push('monitor_heartbeat_missing');
     if (executorHeartbeatMissing) degradedReasons.push('executor_heartbeat_missing');
+    if (runtime.marketStream.running && runtime.marketStream.state === 'error') {
+        degradedReasons.push('market_stream_error');
+    }
+    if (runtime.userStream.running && runtime.userStream.state === 'error') {
+        degradedReasons.push('user_stream_error');
+    }
+    if (
+        runtime.reconciliation.enabled &&
+        runtime.reconciliation.running &&
+        runtime.reconciliation.lastError
+    ) {
+        degradedReasons.push('reconciliation_error');
+    }
     if (runtime.risk.consecutiveMonitorErrors > 0) degradedReasons.push('monitor_errors');
     if (runtime.risk.consecutiveExecutionErrors > 0) degradedReasons.push('execution_errors');
     if (runtime.risk.consecutiveEquitySnapshotFailures > 0) {
@@ -229,7 +249,8 @@ app.get('/api/status', (_req, res) => {
         runtime.monitor.running &&
         runtime.executor.running &&
         degradedReasons.length === 0 &&
-        !runtime.killSwitchActive;
+        !runtime.killSwitchActive &&
+        !streamDegraded;
 
     res.json({
         running,
@@ -260,6 +281,49 @@ app.get('/api/status', (_req, res) => {
             lastError: runtime.executor.lastError || null,
             lastErrorAt: runtime.executor.lastErrorAt || null,
             aggregationQueueDepth: runtime.aggregationQueueDepth || 0,
+        },
+        marketStream: {
+            running: runtime.marketStream.running,
+            state: runtime.marketStream.state,
+            endpoint: runtime.marketStream.endpoint || null,
+            subscribedCount: runtime.marketStream.subscribedCount,
+            reconnectAttempts: runtime.marketStream.reconnectAttempts,
+            lastConnectAt: runtime.marketStream.lastConnectAt || null,
+            lastDisconnectAt: runtime.marketStream.lastDisconnectAt || null,
+            lastMessageAt: runtime.marketStream.lastMessageAt || null,
+            lastHeartbeatAt: runtime.marketStream.lastHeartbeatAt || null,
+            lastPayloadSummary: runtime.marketStream.lastPayloadSummary || null,
+            lastError: runtime.marketStream.lastError || null,
+            lastErrorAt: runtime.marketStream.lastErrorAt || null,
+        },
+        userStream: {
+            running: runtime.userStream.running,
+            state: runtime.userStream.state,
+            endpoint: runtime.userStream.endpoint || null,
+            subscribedCount: runtime.userStream.subscribedCount,
+            reconnectAttempts: runtime.userStream.reconnectAttempts,
+            lastConnectAt: runtime.userStream.lastConnectAt || null,
+            lastDisconnectAt: runtime.userStream.lastDisconnectAt || null,
+            lastMessageAt: runtime.userStream.lastMessageAt || null,
+            lastHeartbeatAt: runtime.userStream.lastHeartbeatAt || null,
+            lastPayloadSummary: runtime.userStream.lastPayloadSummary || null,
+            lastError: runtime.userStream.lastError || null,
+            lastErrorAt: runtime.userStream.lastErrorAt || null,
+        },
+        reconciliation: {
+            enabled: runtime.reconciliation.enabled,
+            running: runtime.reconciliation.running,
+            lastLoopAt: runtime.reconciliation.lastLoopAt || null,
+            lastSuccessAt: runtime.reconciliation.lastSuccessAt || null,
+            lastError: runtime.reconciliation.lastError || null,
+            lastErrorAt: runtime.reconciliation.lastErrorAt || null,
+            scannedTrades: runtime.reconciliation.scannedTrades,
+            pendingTrades: runtime.reconciliation.pendingTrades,
+            queuedEvents: runtime.reconciliation.queuedEvents,
+            reconciledTrades: runtime.reconciliation.reconciledTrades,
+            lastOrderId: runtime.reconciliation.lastOrderId || null,
+            lastEventType: runtime.reconciliation.lastEventType || null,
+            lastEventStatus: runtime.reconciliation.lastEventStatus || null,
         },
         queue,
         risk: {
@@ -301,6 +365,14 @@ app.get('/api/config', (_req, res) => {
             process.env.KILL_SWITCH_MONITOR_STALE_SECONDS || '15',
         previewMode: process.env.PREVIEW_MODE || 'false',
         tradeAggregation: process.env.TRADE_AGGREGATION_ENABLED || 'false',
+        marketWsEnabled: process.env.MARKET_WS_ENABLED ?? 'true',
+        userWsEnabled: process.env.USER_WS_ENABLED ?? 'true',
+        reconciliationEnabled: process.env.RECONCILIATION_ENABLED ?? 'true',
+        streamTargetRefreshInterval: process.env.STREAM_TARGET_REFRESH_INTERVAL_SECONDS || '15',
+        streamHeartbeatInterval: process.env.STREAM_HEARTBEAT_INTERVAL_SECONDS || '10',
+        reconciliationInterval: process.env.RECONCILIATION_INTERVAL_SECONDS || '15',
+        reconciliationStaleOrderSeconds:
+            process.env.RECONCILIATION_STALE_ORDER_SECONDS || '60',
         telegramEnabled: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID),
     });
 });
@@ -470,7 +542,10 @@ async function refresh() {
       ['free balance', formatMoney(status.risk.freeBalance)],
       ['open positions', formatMoney(status.risk.openPositionValue)],
       ['daily loss', formatPct(status.risk.dailyLossPct)],
-      ['risk counters', 'exec ' + status.risk.consecutiveExecutionErrors + ' / monitor ' + status.risk.consecutiveMonitorErrors + ' / equity ' + status.risk.consecutiveEquitySnapshotFailures]
+      ['risk counters', 'exec ' + status.risk.consecutiveExecutionErrors + ' / monitor ' + status.risk.consecutiveMonitorErrors + ' / equity ' + status.risk.consecutiveEquitySnapshotFailures],
+      ['market stream', status.marketStream.state + ' (' + status.marketStream.subscribedCount + ')'],
+      ['user stream', status.userStream.state + ' (' + status.userStream.subscribedCount + ')'],
+      ['reconciliation', (status.reconciliation.running ? 'running' : 'stopped') + ' / pending ' + status.reconciliation.pendingTrades]
     ].map(([label, value]) => '<div class="stat"><span class="label">' + label + '</span><span class="value">' + value + '</span></div>').join('');
 
     document.getElementById('config').innerHTML = Object.entries(config)

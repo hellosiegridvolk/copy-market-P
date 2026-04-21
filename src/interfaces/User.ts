@@ -50,6 +50,10 @@ export interface UserActivityInterface {
     sourceTradeId?: string | null;
     aggregated?: boolean;
     aggregatedTradeCount?: number;
+    streamEventType?: string | null;
+    streamEventStatus?: string | null;
+    streamLastUpdateAt?: number | null;
+    reconciledAt?: number | null;
 }
 
 export interface UserPositionInterface {
