@@ -262,7 +262,13 @@ const handleMessage = (stream: StreamName, data: unknown) => {
 
         if (stream === 'userStream') {
             for (const payload of payloads) {
-                recordUserStreamEvent(payload);
+                void recordUserStreamEvent(payload).catch((error) => {
+                    Logger.warning(
+                        `Unable to persist user stream event for reconciliation: ${
+                            error instanceof Error ? error.message : String(error)
+                        }`
+                    );
+                });
             }
         }
     } catch {

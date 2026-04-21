@@ -216,6 +216,9 @@ app.get('/api/status', (_req, res) => {
 
     if (!runtime.monitor.running) degradedReasons.push('monitor_stopped');
     if (!runtime.executor.running) degradedReasons.push('executor_stopped');
+    if (runtime.reconciliation.enabled && !runtime.reconciliation.running) {
+        degradedReasons.push('reconciliation_stopped');
+    }
     if (monitorStale) degradedReasons.push('monitor_stale');
     if (executorStale) degradedReasons.push('executor_stale');
     if (monitorHeartbeatMissing) degradedReasons.push('monitor_heartbeat_missing');
@@ -326,7 +329,11 @@ app.get('/api/status', (_req, res) => {
             scannedTrades: runtime.reconciliation.scannedTrades,
             pendingTrades: runtime.reconciliation.pendingTrades,
             queuedEvents: runtime.reconciliation.queuedEvents,
+            persistedQueuedEvents: runtime.reconciliation.persistedQueuedEvents,
+            restoredQueuedEvents: runtime.reconciliation.restoredQueuedEvents,
             reconciledTrades: runtime.reconciliation.reconciledTrades,
+            lastPersistenceAt: runtime.reconciliation.lastPersistenceAt || null,
+            restoredFromDiskAt: runtime.reconciliation.restoredFromDiskAt || null,
             lastOrderId: runtime.reconciliation.lastOrderId || null,
             lastEventType: runtime.reconciliation.lastEventType || null,
             lastEventStatus: runtime.reconciliation.lastEventStatus || null,

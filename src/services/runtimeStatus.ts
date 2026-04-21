@@ -23,7 +23,11 @@ export interface ReconciliationRuntimeStatus extends WorkerRuntimeStatus {
     scannedTrades: number;
     pendingTrades: number;
     queuedEvents: number;
+    persistedQueuedEvents: number;
+    restoredQueuedEvents: number;
     reconciledTrades: number;
+    lastPersistenceAt?: number;
+    restoredFromDiskAt?: number;
     lastOrderId?: string;
     lastEventType?: string;
     lastEventStatus?: string;
@@ -96,6 +100,8 @@ const createReconciliationState = (): ReconciliationRuntimeStatus => ({
     scannedTrades: 0,
     pendingTrades: 0,
     queuedEvents: 0,
+    persistedQueuedEvents: 0,
+    restoredQueuedEvents: 0,
     reconciledTrades: 0,
 });
 
