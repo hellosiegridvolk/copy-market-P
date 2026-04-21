@@ -24,6 +24,10 @@ export interface ReconciliationRuntimeStatus extends WorkerRuntimeStatus {
     pendingTrades: number;
     queuedEvents: number;
     reconciledTrades: number;
+    recoveryPending: boolean;
+    recoveryReason?: string;
+    recoveryStartedAt?: number;
+    lastRecoveredAt?: number;
     lastOrderId?: string;
     lastEventType?: string;
     lastEventStatus?: string;
@@ -97,6 +101,7 @@ const createReconciliationState = (): ReconciliationRuntimeStatus => ({
     pendingTrades: 0,
     queuedEvents: 0,
     reconciledTrades: 0,
+    recoveryPending: false,
 });
 
 const createRiskState = (): RiskRuntimeStatus => ({

@@ -3,7 +3,7 @@ import { ENV } from '../config/env';
 import { TradeLifecycleStatus, UserActivityInterface } from '../interfaces/User';
 import { getUserActivityModel } from '../models/userHistory';
 import Logger from '../utils/logger';
-import { updateReconciliationStatus } from './runtimeStatus';
+import { getRuntimeStatus, updateReconciliationStatus } from './runtimeStatus';
 
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const RETRY_LIMIT = ENV.RETRY_LIMIT;
@@ -66,6 +66,30 @@ let isRunning = false;
 let totalReconciledTrades = 0;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const markReconciliationRecoveryPending = (reason: string) => {
+    const now = Date.now();
+    const runtime = getRuntimeStatus();
+
+    updateReconciliationStatus({
+        recoveryPending: true,
+        recoveryReason: reason,
+        recoveryStartedAt: runtime.reconciliation.recoveryStartedAt ?? now,
+    });
+};
+
+export const clearReconciliationRecoveryPending = () => {
+    if (!getRuntimeStatus().reconciliation.recoveryPending) {
+        return;
+    }
+
+    updateReconciliationStatus({
+        recoveryPending: false,
+        recoveryReason: undefined,
+        recoveryStartedAt: undefined,
+        lastRecoveredAt: Date.now(),
+    });
+};
 
 const toNumber = (value: unknown): number | null => {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -462,12 +486,17 @@ const runReconciliationCycle = async (clobClient: ClobClient | null) => {
 
     totalReconciledTrades += reconciledThisCycle;
 
+    const successAt = Date.now();
     updateReconciliationStatus({
-        lastSuccessAt: Date.now(),
+        lastSuccessAt: successAt,
         reconciledTrades: totalReconciledTrades,
         queuedEvents: activeEventQueue.size,
         pendingTrades: candidates.length,
     });
+
+    if (getRuntimeStatus().reconciliation.recoveryPending) {
+        clearReconciliationRecoveryPending();
+    }
 };
 
 export const stopTradeReconciliation = () => {
@@ -484,6 +513,9 @@ export const startTradeReconciliation = (clobClient: ClobClient | null) => {
             enabled: false,
             running: false,
             queuedEvents: 0,
+            recoveryPending: false,
+            recoveryReason: undefined,
+            recoveryStartedAt: undefined,
         });
         return;
     }
@@ -500,6 +532,10 @@ export const startTradeReconciliation = (clobClient: ClobClient | null) => {
         scannedTrades: 0,
         pendingTrades: 0,
         reconciledTrades: 0,
+        recoveryPending: false,
+        recoveryReason: undefined,
+        recoveryStartedAt: undefined,
+        lastRecoveredAt: undefined,
         lastError: undefined,
         lastErrorAt: undefined,
     });

@@ -21,6 +21,7 @@ This repository now contains the unpacked application source. The runtime does n
 - Local NeDB persistence for activities and tracked positions
 - Optional Polymarket market/user websocket groundwork with reconciliation fallback polling
 - Local pending-exposure accounting overlay for conservative kill-switch checks
+- Post-gap reconciliation guard that pauses live execution until a successful reconciliation pass follows a user-stream disconnect/error
 - Explicit persisted trade lifecycle:
   - `new`
   - `processing`
@@ -36,6 +37,7 @@ This repository now contains the unpacked application source. The runtime does n
 ## What is not yet production-grade
 
 - Websocket market and user subscriptions now exist as groundwork, but they are still best-effort visibility/reconciliation helpers rather than a full exchange-grade recovery layer
+- Live execution now waits for a successful post-gap reconciliation pass after meaningful user-stream interruptions, but there is still no full external replay source for downtime gaps
 - Kill-switch checks now include locally reserved pending buy exposure, but they still rely on API-reported position values rather than a full independent reconciliation engine
 - Local file persistence needs explicit backup and log-rotation discipline in any long-running deployment
 - Some secondary historical docs remain informational rather than fully updated operational guides
@@ -60,6 +62,7 @@ This repository now contains the unpacked application source. The runtime does n
 - `MARKET_WS_ENABLED`, `USER_WS_ENABLED`, and `RECONCILIATION_ENABLED` let you disable the groundwork streams if you need a polling-only validation pass
 - `KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT` lets you cap locally reserved buy exposure relative to free USDC
 - The status API reports the effective mode, worker heartbeats, stream/reconciliation state, queue state, last success, last error, and local pending-exposure accounting
+- The reconciliation section of `/api/status` reports whether live execution is still waiting on post-gap recovery after a user-stream interruption
 - Default API/UI port is `3000` unless `PORT` is set
 
 ## Local validation flow

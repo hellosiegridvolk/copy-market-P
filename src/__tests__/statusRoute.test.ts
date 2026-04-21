@@ -167,4 +167,37 @@ describe('/api/status truthfulness', () => {
         expect(status.risk.reservedBuyExposure).toBe(130);
         expect(status.risk.availableBalanceAfterPending).toBe(-30);
     });
+
+    test('surfaces reconciliation recovery gaps as degraded until post-gap sync completes', async () => {
+        updateRuntimeStatus({
+            mode: 'live',
+            monitor: {
+                running: true,
+                lastLoopAt: Date.now(),
+            },
+            executor: {
+                running: true,
+                lastLoopAt: Date.now(),
+            },
+            reconciliation: {
+                enabled: true,
+                running: true,
+                queuedEvents: 1,
+                scannedTrades: 1,
+                pendingTrades: 1,
+                reconciledTrades: 0,
+                recoveryPending: true,
+                recoveryReason: 'user_stream_disconnected',
+                recoveryStartedAt: Date.now() - 5000,
+            },
+        });
+
+        const status = await fetchStatus();
+
+        expect(status.healthy).toBe(false);
+        expect(status.degradedReasons).toContain('reconciliation_recovery_pending');
+        expect(status.reconciliation.recoveryPending).toBe(true);
+        expect(status.reconciliation.recoveryReason).toBe('user_stream_disconnected');
+        expect(status.reconciliation.recoveryStartedAt).not.toBeNull();
+    });
 });

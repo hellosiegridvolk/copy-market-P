@@ -3,7 +3,7 @@ import { ENV } from '../config/env';
 import { TradeLifecycleStatus, UserActivityInterface } from '../interfaces/User';
 import { getUserActivityModel } from '../models/userHistory';
 import Logger from '../utils/logger';
-import { recordUserStreamEvent } from './reconciliation';
+import { markReconciliationRecoveryPending, recordUserStreamEvent } from './reconciliation';
 import { updateStreamStatus } from './runtimeStatus';
 
 const WebSocket = require('ws');
@@ -11,6 +11,7 @@ const WebSocket = require('ws');
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const MARKET_WS_ENABLED = ENV.MARKET_WS_ENABLED;
 const USER_WS_ENABLED = ENV.USER_WS_ENABLED;
+const RECONCILIATION_ENABLED = ENV.RECONCILIATION_ENABLED;
 const STREAM_TARGET_REFRESH_MS = ENV.STREAM_TARGET_REFRESH_INTERVAL_SECONDS * 1000;
 const STREAM_HEARTBEAT_MS = ENV.STREAM_HEARTBEAT_INTERVAL_SECONDS * 1000;
 
@@ -152,6 +153,11 @@ export const buildStreamDeltaPayload = (
               operation,
           };
 
+export const shouldRequireRecoverySync = (
+    stream: StreamName,
+    targetCount: number
+): boolean => stream === 'userStream' && RECONCILIATION_ENABLED && targetCount > 0;
+
 const clearTimer = (timer: NodeJS.Timeout | null) => {
     if (timer) {
         clearInterval(timer);
@@ -181,6 +187,10 @@ const closeStream = (stream: StreamName, nextState: 'idle' | 'disabled' = 'idle'
 };
 
 const markStreamError = (stream: StreamName, message: string) => {
+    if (shouldRequireRecoverySync(stream, controllers[stream].targets.size)) {
+        markReconciliationRecoveryPending('user_stream_error');
+    }
+
     updateStreamStatus(stream, {
         running: false,
         state: 'error',
@@ -322,6 +332,10 @@ const connectStream = async (
         clearTimer(controller.heartbeatTimer);
         controller.heartbeatTimer = null;
         controller.socket = null;
+
+        if (shouldRequireRecoverySync(stream, controller.targets.size)) {
+            markReconciliationRecoveryPending('user_stream_disconnected');
+        }
 
         updateStreamStatus(stream, {
             running: false,

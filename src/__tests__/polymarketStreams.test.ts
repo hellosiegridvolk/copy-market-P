@@ -3,6 +3,7 @@ jest.mock('../config/env', () => ({
         USER_ADDRESSES: [],
         MARKET_WS_ENABLED: true,
         USER_WS_ENABLED: true,
+        RECONCILIATION_ENABLED: true,
         STREAM_TARGET_REFRESH_INTERVAL_SECONDS: 15,
         STREAM_HEARTBEAT_INTERVAL_SECONDS: 10,
         CLOB_WS_URL: 'wss://ws-subscriptions-clob.polymarket.com/ws',
@@ -16,6 +17,7 @@ jest.mock('../models/userHistory', () => ({
 }));
 
 jest.mock('../services/reconciliation', () => ({
+    markReconciliationRecoveryPending: jest.fn(),
     recordUserStreamEvent: jest.fn(),
 }));
 
@@ -32,6 +34,7 @@ jest.mock('../utils/logger', () => ({
 import {
     buildChannelEndpoint,
     buildMarketSubscription,
+    shouldRequireRecoverySync,
     buildStreamDeltaPayload,
     buildUserSubscription,
     collectStreamTargets,
@@ -118,5 +121,11 @@ describe('polymarket websocket groundwork helpers', () => {
             markets: ['market-1'],
             operation: 'unsubscribe',
         });
+    });
+
+    test('recovery sync is only required for active user-stream targets', () => {
+        expect(shouldRequireRecoverySync('marketStream', 2)).toBe(false);
+        expect(shouldRequireRecoverySync('userStream', 0)).toBe(false);
+        expect(shouldRequireRecoverySync('userStream', 2)).toBe(true);
     });
 });
