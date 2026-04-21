@@ -1,10 +1,20 @@
-const fakeDbDir = 'C:\\\\nonexistent-copy-market-status-test-db';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { AddressInfo } from 'net';
+
+let fakeDbDir = path.join(os.tmpdir(), 'copy-market-status-test-db');
 
 jest.mock('../config/db', () => ({
     getDbDir: jest.fn(() => fakeDbDir),
 }));
 
-import { AddressInfo } from 'net';
+jest.mock('../config/env', () => ({
+    ENV: {
+        USER_ADDRESSES: ['0x1234567890abcdef1234567890abcdef12345678'],
+    },
+}));
+
 import { startServer } from '../server';
 import { resetRuntimeStatus, updateRuntimeStatus } from '../services/runtimeStatus';
 
@@ -15,6 +25,7 @@ describe('/api/status truthfulness', () => {
     beforeEach(() => {
         resetRuntimeStatus();
         consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+        fakeDbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copy-market-status-test-'));
     });
 
     afterEach(async () => {
@@ -33,6 +44,8 @@ describe('/api/status truthfulness', () => {
             });
             server = null;
         }
+
+        fs.rmSync(fakeDbDir, { recursive: true, force: true });
     });
 
     const fetchStatus = async () => {
@@ -86,5 +99,33 @@ describe('/api/status truthfulness', () => {
 
         expect(status.healthy).toBe(false);
         expect(status.degradedReasons).toContain('monitor_heartbeat_missing');
+    });
+
+    test('counts queue items only for configured tracked traders', async () => {
+        const trackedFile = path.join(
+            fakeDbDir,
+            'user_activities_0x1234567890abcdef1234567890abcdef12345678.db'
+        );
+        const unrelatedFile = path.join(
+            fakeDbDir,
+            'user_activities_0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef.db'
+        );
+
+        fs.writeFileSync(
+            trackedFile,
+            `${JSON.stringify({ status: 'skipped', bot: true, botExcutedTime: 999 })}\n`,
+            'utf8'
+        );
+        fs.writeFileSync(
+            unrelatedFile,
+            `${JSON.stringify({ status: 'new', bot: false, botExcutedTime: 0 })}\n`,
+            'utf8'
+        );
+
+        const status = await fetchStatus();
+
+        expect(status.queue.skipped).toBe(1);
+        expect(status.queue.new).toBe(0);
+        expect(status.dataFiles).toBe(1);
     });
 });

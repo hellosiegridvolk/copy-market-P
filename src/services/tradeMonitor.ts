@@ -31,7 +31,10 @@ interface FetchTradeCycleResult {
     hadError: boolean;
 }
 
-const buildActivityRecord = (address: string, activity: any) => ({
+export const shouldBootstrapHistoricalImport = (counts: number[]): boolean =>
+    counts.every((count) => count === 0);
+
+export const buildActivityRecord = (address: string, activity: any, historicalOnly = false) => ({
     proxyWallet: activity.proxyWallet,
     timestamp: activity.timestamp,
     conditionId: activity.conditionId,
@@ -53,11 +56,11 @@ const buildActivityRecord = (address: string, activity: any) => ({
     bio: activity.bio,
     profileImage: activity.profileImage,
     profileImageOptimized: activity.profileImageOptimized,
-    bot: false,
-    botExcutedTime: 0,
-    status: 'new',
+    bot: historicalOnly,
+    botExcutedTime: historicalOnly ? 999 : 0,
+    status: historicalOnly ? 'skipped' : 'new',
     retryCount: 0,
-    lastError: null,
+    lastError: historicalOnly ? 'historical_trade_on_first_run' : null,
     lastAttemptAt: null,
     executedAt: null,
     orderId: null,
@@ -72,7 +75,7 @@ const buildActivityRecord = (address: string, activity: any) => ({
     sourceTradeId: activity.transactionHash,
 });
 
-const init = async () => {
+const init = async (): Promise<number[]> => {
     const counts: number[] = [];
     for (const { address, UserActivity } of userModels) {
         const count = await UserActivity.countDocuments();
@@ -161,13 +164,15 @@ const init = async () => {
     }
     Logger.clearLine();
     Logger.tradersPositions(USER_ADDRESSES, positionCounts, positionDetails, profitabilities);
+
+    return counts;
 };
 
 const fetchTradeDataForTrader = async ({
     address,
     UserActivity,
     UserPosition,
-}: typeof userModels[number]): Promise<FetchTradeCycleResult> => {
+}: typeof userModels[number], historicalOnly = false): Promise<FetchTradeCycleResult> => {
     try {
         let newTradesDetected = 0;
 
@@ -189,9 +194,13 @@ const fetchTradeDataForTrader = async ({
             }).exec();
             if (exists) continue;
 
-            await UserActivity(buildActivityRecord(address, activity)).save();
+            await UserActivity(buildActivityRecord(address, activity, historicalOnly)).save();
             newTradesDetected += 1;
-            Logger.info(`New trade detected for ${address.slice(0, 6)}...${address.slice(-4)}`);
+            Logger.info(
+                historicalOnly
+                    ? `Imported historical trade for ${address.slice(0, 6)}...${address.slice(-4)}`
+                    : `New trade detected for ${address.slice(0, 6)}...${address.slice(-4)}`
+            );
         }
 
         // Also fetch and update positions
@@ -246,8 +255,10 @@ const fetchTradeDataForTrader = async ({
 };
 
 // Parallel fetch for all traders
-const fetchTradeData = async () => {
-    const results = await Promise.allSettled(userModels.map(fetchTradeDataForTrader));
+const fetchTradeData = async (historicalOnly = false) => {
+    const results = await Promise.allSettled(
+        userModels.map((userModel) => fetchTradeDataForTrader(userModel, historicalOnly))
+    );
 
     return results.reduce(
         (summary, result) => {
@@ -330,38 +341,23 @@ const tradeMonitor = async () => {
         lastError: undefined,
         lastErrorAt: undefined,
     });
-    await init();
+    const initialCounts = await init();
+    const bootstrapHistoricalImport = shouldBootstrapHistoricalImport(initialCounts);
     Logger.success(`Monitoring ${USER_ADDRESSES.length} trader(s) every ${FETCH_INTERVAL}s`);
     Logger.separator();
 
-    // On first run, mark all existing historical trades as already processed
-    if (isFirstRun) {
-        Logger.info('First run: marking all historical trades as processed...');
-        for (const { address, UserActivity } of userModels) {
-            const count = await UserActivity.updateMany(
-                { bot: false, status: { $exists: false } },
-                {
-                    bot: true,
-                    botExcutedTime: 999,
-                    status: 'skipped',
-                    lastError: 'historical_trade_on_first_run',
-                }
-            );
-            if (count.modifiedCount > 0) {
-                Logger.info(
-                    `Marked ${count.modifiedCount} historical trades as processed for ${address.slice(0, 6)}...${address.slice(-4)}`
-                );
-            }
-        }
-        isFirstRun = false;
-        Logger.success('\nHistorical trades processed. Now monitoring for new trades only.');
+    if (bootstrapHistoricalImport) {
+        Logger.info(
+            'Empty datastore detected: importing the current trader history as skipped before live monitoring begins...'
+        );
         Logger.separator();
     }
 
     while (isRunning) {
         try {
             updateWorkerStatus('monitor', { lastLoopAt: Date.now() });
-            const { newTradesDetected, hadError } = await fetchTradeData();
+            const historicalOnly = bootstrapHistoricalImport && isFirstRun;
+            const { newTradesDetected, hadError } = await fetchTradeData(historicalOnly);
             const successAt = Date.now();
 
             if (hadError) {
@@ -371,7 +367,21 @@ const tradeMonitor = async () => {
             }
 
             if (newTradesDetected > 0) {
-                Logger.info(`Detected ${newTradesDetected} new trade(s) across tracked traders`);
+                Logger.info(
+                    historicalOnly
+                        ? `Imported ${newTradesDetected} historical trade(s) as skipped across tracked traders`
+                        : `Detected ${newTradesDetected} new trade(s) across tracked traders`
+                );
+            }
+
+            if (historicalOnly) {
+                isFirstRun = false;
+                Logger.success(
+                    '\nHistorical trades imported as skipped. Now monitoring for new trades only.'
+                );
+                Logger.separator();
+            } else if (isFirstRun) {
+                isFirstRun = false;
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

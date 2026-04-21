@@ -1,6 +1,7 @@
 import express from 'express';
 import swaggerUi from 'swagger-ui-express';
 import { getDbDir } from '../config/db';
+import { ENV } from '../config/env';
 import * as fs from 'fs';
 import * as path from 'path';
 import { TradeLifecycleStatus, UserActivityInterface } from '../interfaces/User';
@@ -59,6 +60,36 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
 
 let botStartTime = Date.now();
 
+const getTrackedAddressSet = (): Set<string> =>
+    new Set((ENV.USER_ADDRESSES || []).map((address) => address.toLowerCase()));
+
+const isTrackedActivityFile = (fileName: string, trackedAddresses: Set<string>): boolean => {
+    if (!fileName.startsWith('user_activities_') || !fileName.endsWith('.db')) {
+        return false;
+    }
+
+    const walletAddress = fileName.slice('user_activities_'.length, -'.db'.length).toLowerCase();
+    return trackedAddresses.has(walletAddress);
+};
+
+const isTrackedDbFile = (fileName: string, trackedAddresses: Set<string>): boolean => {
+    if (!fileName.endsWith('.db')) {
+        return false;
+    }
+
+    const prefixes = ['user_activities_', 'user_positions_'];
+    for (const prefix of prefixes) {
+        if (!fileName.startsWith(prefix)) {
+            continue;
+        }
+
+        const walletAddress = fileName.slice(prefix.length, -'.db'.length).toLowerCase();
+        return trackedAddresses.has(walletAddress);
+    }
+
+    return false;
+};
+
 const deriveLegacyStatus = (trade: UserActivityInterface): TradeLifecycleStatus => {
     if (trade.status) {
         return trade.status;
@@ -77,8 +108,11 @@ const readPersistedTrades = (): UserActivityInterface[] => {
         return [];
     }
 
+    const trackedAddresses = getTrackedAddressSet();
     const trades: UserActivityInterface[] = [];
-    for (const file of fs.readdirSync(dbDir).filter((entry) => entry.startsWith('user_activities_'))) {
+    for (const file of fs
+        .readdirSync(dbDir)
+        .filter((entry) => isTrackedActivityFile(entry, trackedAddresses))) {
         try {
             const content = fs.readFileSync(path.join(dbDir, file), 'utf-8');
             content
@@ -159,8 +193,9 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/status', (_req, res) => {
     const dbDir = getDbDir();
+    const trackedAddresses = getTrackedAddressSet();
     const dbFiles = fs.existsSync(dbDir)
-        ? fs.readdirSync(dbDir).filter((file) => file.endsWith('.db'))
+        ? fs.readdirSync(dbDir).filter((file) => isTrackedDbFile(file, trackedAddresses))
         : [];
     const runtime = getRuntimeStatus();
     const trades = readPersistedTrades();
