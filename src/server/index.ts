@@ -233,6 +233,9 @@ app.get('/api/status', (_req, res) => {
     ) {
         degradedReasons.push('reconciliation_error');
     }
+    if (runtime.reconciliation.enabled && runtime.reconciliation.recoveryPending) {
+        degradedReasons.push('reconciliation_recovery_pending');
+    }
     if (runtime.risk.consecutiveMonitorErrors > 0) degradedReasons.push('monitor_errors');
     if (runtime.risk.consecutiveExecutionErrors > 0) degradedReasons.push('execution_errors');
     if (runtime.risk.consecutiveEquitySnapshotFailures > 0) {
@@ -327,6 +330,10 @@ app.get('/api/status', (_req, res) => {
             pendingTrades: runtime.reconciliation.pendingTrades,
             queuedEvents: runtime.reconciliation.queuedEvents,
             reconciledTrades: runtime.reconciliation.reconciledTrades,
+            recoveryPending: runtime.reconciliation.recoveryPending,
+            recoveryReason: runtime.reconciliation.recoveryReason || null,
+            recoveryStartedAt: runtime.reconciliation.recoveryStartedAt || null,
+            lastRecoveredAt: runtime.reconciliation.lastRecoveredAt || null,
             lastOrderId: runtime.reconciliation.lastOrderId || null,
             lastEventType: runtime.reconciliation.lastEventType || null,
             lastEventStatus: runtime.reconciliation.lastEventStatus || null,

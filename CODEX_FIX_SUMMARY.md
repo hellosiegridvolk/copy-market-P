@@ -72,7 +72,9 @@
   - runtime risk telemetry now exposes equity source, balance/position snapshots, drawdown percentage, and consecutive error counters
   - degraded live-mode equity snapshots no longer masquerade as trustworthy full-account equity
   - live mode now refuses to continue if the monitor worker is stopped or never published a heartbeat
+  - live mode now also waits for a successful post-gap reconciliation pass after meaningful user-stream disconnect/error conditions instead of assuming reconnect intent equals recovery truth
   - `/api/status` now marks stopped workers and missing worker heartbeats as degraded instead of optimistic healthy
+  - `/api/status` now surfaces reconciliation recovery-pending state and the reason/timestamp for the current gap
   - standalone `swagger` entrypoint now actually starts the server
   - empty-datastore bootstrap imports now quarantine first-run historical trades as `skipped` before live monitoring continues
 - Package and script truthfulness:
@@ -103,12 +105,14 @@
   - env validation tests expanded for preview-mode behavior
   - executor lifecycle tests now cover degraded equity snapshot and stale monitor kill-switch behavior
   - executor lifecycle tests now cover the monitor-not-running kill-switch path
+  - executor lifecycle tests now cover the post-gap reconciliation hold path
   - status route tests now verify that stopped workers and missing heartbeats are surfaced as degraded
+  - status route tests now verify that reconciliation recovery gaps are surfaced as degraded until recovery completes
   - post-order persistence tests rewritten around normalized outcomes
 
 ## 4. What remains blocked
 
-- Websocket and reconciliation groundwork is merged, but it is still not a full replay/recovery engine
+- Websocket and reconciliation groundwork now blocks live execution during unresolved post-gap recovery, but it is still not a full replay/recovery engine
 - Kill switch now tracks local pending exposure as well as runtime risk, but it still depends on API-sourced balance/position values rather than a full independent accounting engine
 - No live order-placement smoke test was executed; validation in this branch stopped at authenticated preflight plus a short live startup/status smoke
 - Secondary editorial cleanup is still pending in some non-core docs such as `docs/IMPROVEMENTS.md`, `docs/LOGGING_PREVIEW.md`, and translated README variants

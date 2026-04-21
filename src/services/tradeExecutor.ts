@@ -326,6 +326,30 @@ const checkMonitorHealth = (): boolean => {
     return true;
 };
 
+const checkRecoveryReadiness = (): boolean => {
+    const runtime = getRuntimeStatus();
+
+    if (!runtime.reconciliation.enabled || !runtime.reconciliation.recoveryPending) {
+        return true;
+    }
+
+    const blockedAt = Date.now();
+    const message = runtime.reconciliation.recoveryReason
+        ? `waiting_for_post_gap_reconciliation:${runtime.reconciliation.recoveryReason}`
+        : 'waiting_for_post_gap_reconciliation';
+
+    updateWorkerStatus('executor', {
+        lastError: message,
+        lastErrorAt: blockedAt,
+    });
+    updateRuntimeStatus({
+        lastError: message,
+        lastErrorAt: blockedAt,
+    });
+
+    return false;
+};
+
 const checkDailyLoss = async (
     localAccountingSnapshot: LocalAccountingSnapshot
 ): Promise<boolean> => {
@@ -379,6 +403,10 @@ const canExecuteTrade = async (
     }
 
     if (!checkMonitorHealth()) {
+        return false;
+    }
+
+    if (!checkRecoveryReadiness()) {
         return false;
     }
 

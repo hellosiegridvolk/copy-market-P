@@ -294,4 +294,34 @@ describe('trade executor lifecycle persistence', () => {
         expect(runtime.risk.reservedBuyExposure).toBe(110);
         expect(runtime.risk.availableBalanceAfterPending).toBe(-10);
     });
+
+    test('live mode pauses execution while reconciliation recovery is still pending after a stream gap', async () => {
+        const trade = makeTrade({ _id: 'trade-10' });
+        find.mockReturnValue({ exec: jest.fn().mockResolvedValue([trade]) });
+        updateRuntimeStatus({
+            reconciliation: {
+                enabled: true,
+                running: true,
+                queuedEvents: 1,
+                scannedTrades: 1,
+                pendingTrades: 1,
+                reconciledTrades: 0,
+                recoveryPending: true,
+                recoveryReason: 'user_stream_disconnected',
+                recoveryStartedAt: Date.now() - 5000,
+            },
+        });
+
+        const loop = tradeExecutor({} as any);
+        await waitForExecutorCycle();
+        stopTradeExecutor();
+        await loop;
+
+        const runtime = getRuntimeStatus();
+        expect(postOrder).not.toHaveBeenCalled();
+        expect(runtime.killSwitchActive).toBe(false);
+        expect(runtime.lastError).toBe(
+            'waiting_for_post_gap_reconciliation:user_stream_disconnected'
+        );
+    });
 });

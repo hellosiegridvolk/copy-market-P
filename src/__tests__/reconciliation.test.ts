@@ -28,8 +28,11 @@ jest.mock('../utils/logger', () => ({
 import {
     buildPatchFromOpenOrder,
     buildPatchFromStreamEvent,
+    clearReconciliationRecoveryPending,
     extractUserStreamEvents,
+    markReconciliationRecoveryPending,
 } from '../services/reconciliation';
+import { getRuntimeStatus, resetRuntimeStatus } from '../services/runtimeStatus';
 
 const makeTrade = (overrides: Record<string, unknown> = {}) =>
     ({
@@ -50,6 +53,10 @@ const makeTrade = (overrides: Record<string, unknown> = {}) =>
     }) as any;
 
 describe('reconciliation groundwork helpers', () => {
+    beforeEach(() => {
+        resetRuntimeStatus();
+    });
+
     test('extractUserStreamEvents expands trade payloads by referenced order ids', () => {
         const events = extractUserStreamEvents({
             event_type: 'trade',
@@ -144,5 +151,22 @@ describe('reconciliation groundwork helpers', () => {
                 lastError: 'remaining_size_unfilled',
             })
         );
+    });
+
+    test('reconciliation recovery state stays pending until a successful post-gap pass clears it', () => {
+        markReconciliationRecoveryPending('user_stream_disconnected');
+
+        let runtime = getRuntimeStatus();
+        expect(runtime.reconciliation.recoveryPending).toBe(true);
+        expect(runtime.reconciliation.recoveryReason).toBe('user_stream_disconnected');
+        expect(runtime.reconciliation.recoveryStartedAt).toEqual(expect.any(Number));
+
+        clearReconciliationRecoveryPending();
+
+        runtime = getRuntimeStatus();
+        expect(runtime.reconciliation.recoveryPending).toBe(false);
+        expect(runtime.reconciliation.recoveryReason).toBeUndefined();
+        expect(runtime.reconciliation.recoveryStartedAt).toBeUndefined();
+        expect(runtime.reconciliation.lastRecoveredAt).toEqual(expect.any(Number));
     });
 });
