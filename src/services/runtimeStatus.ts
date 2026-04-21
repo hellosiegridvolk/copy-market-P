@@ -29,6 +29,27 @@ export interface ReconciliationRuntimeStatus extends WorkerRuntimeStatus {
     lastEventStatus?: string;
 }
 
+export type EquitySnapshotSource =
+    | 'unknown'
+    | 'balance_plus_positions'
+    | 'balance_only_fallback'
+    | 'balance_unavailable';
+
+export interface RiskRuntimeStatus {
+    currentEquity?: number;
+    freeBalance?: number;
+    openPositionValue?: number;
+    dailyStartEquity?: number;
+    dailyLossPct?: number;
+    equitySource: EquitySnapshotSource;
+    lastEquityAt?: number;
+    lastEquityError?: string;
+    lastEquityErrorAt?: number;
+    consecutiveExecutionErrors: number;
+    consecutiveMonitorErrors: number;
+    consecutiveEquitySnapshotFailures: number;
+}
+
 export interface RuntimeStatus {
     startedAt: number;
     mode: 'preview' | 'live';
@@ -43,6 +64,7 @@ export interface RuntimeStatus {
     marketStream: StreamRuntimeStatus;
     userStream: StreamRuntimeStatus;
     reconciliation: ReconciliationRuntimeStatus;
+    risk: RiskRuntimeStatus;
 }
 
 const createWorkerState = (): WorkerRuntimeStatus => ({
@@ -66,6 +88,13 @@ const createReconciliationState = (): ReconciliationRuntimeStatus => ({
     reconciledTrades: 0,
 });
 
+const createRiskState = (): RiskRuntimeStatus => ({
+    equitySource: 'unknown',
+    consecutiveExecutionErrors: 0,
+    consecutiveMonitorErrors: 0,
+    consecutiveEquitySnapshotFailures: 0,
+});
+
 const runtimeStatus: RuntimeStatus = {
     startedAt: Date.now(),
     mode: process.env.PREVIEW_MODE === 'true' ? 'preview' : 'live',
@@ -76,6 +105,7 @@ const runtimeStatus: RuntimeStatus = {
     marketStream: createStreamState(process.env.CLOB_WS_URL),
     userStream: createStreamState(process.env.CLOB_WS_URL),
     reconciliation: createReconciliationState(),
+    risk: createRiskState(),
 };
 
 export const getRuntimeStatus = (): RuntimeStatus => ({
@@ -85,6 +115,7 @@ export const getRuntimeStatus = (): RuntimeStatus => ({
     marketStream: { ...runtimeStatus.marketStream },
     userStream: { ...runtimeStatus.userStream },
     reconciliation: { ...runtimeStatus.reconciliation },
+    risk: { ...runtimeStatus.risk },
 });
 
 export const updateRuntimeStatus = (patch: Partial<RuntimeStatus>): RuntimeStatus => {
@@ -108,7 +139,12 @@ export const updateRuntimeStatus = (patch: Partial<RuntimeStatus>): RuntimeStatu
         Object.assign(runtimeStatus.reconciliation, patch.reconciliation);
     }
 
-    const { monitor, executor, marketStream, userStream, reconciliation, ...topLevelPatch } = patch;
+    if (patch.risk) {
+        Object.assign(runtimeStatus.risk, patch.risk);
+    }
+
+    const { monitor, executor, marketStream, userStream, reconciliation, risk, ...topLevelPatch } =
+        patch;
     Object.assign(runtimeStatus, topLevelPatch);
 
     return getRuntimeStatus();
@@ -149,6 +185,21 @@ export const updateReconciliationStatus = (
     return getRuntimeStatus();
 };
 
+export const updateRiskStatus = (patch: Partial<RiskRuntimeStatus>): RuntimeStatus => {
+    runtimeStatus.risk = {
+        ...runtimeStatus.risk,
+        ...patch,
+    };
+
+    return getRuntimeStatus();
+};
+
+export const activateKillSwitch = (reason: string): RuntimeStatus =>
+    updateRuntimeStatus({ killSwitchActive: true, killSwitchReason: reason });
+
+export const clearKillSwitch = (): RuntimeStatus =>
+    updateRuntimeStatus({ killSwitchActive: false, killSwitchReason: undefined });
+
 export const resetRuntimeStatus = (): RuntimeStatus => {
     runtimeStatus.startedAt = Date.now();
     runtimeStatus.mode = process.env.PREVIEW_MODE === 'true' ? 'preview' : 'live';
@@ -163,6 +214,7 @@ export const resetRuntimeStatus = (): RuntimeStatus => {
     runtimeStatus.marketStream = createStreamState(process.env.CLOB_WS_URL);
     runtimeStatus.userStream = createStreamState(process.env.CLOB_WS_URL);
     runtimeStatus.reconciliation = createReconciliationState();
+    runtimeStatus.risk = createRiskState();
 
     return getRuntimeStatus();
 };

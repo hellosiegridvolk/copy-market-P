@@ -160,6 +160,48 @@ const validateNumericConfig = (): void => {
         );
     }
 
+    const killSwitchEquityFallbackLimit = parseInt(
+        process.env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT || '3',
+        10
+    );
+    if (
+        isNaN(killSwitchEquityFallbackLimit) ||
+        killSwitchEquityFallbackLimit < 1 ||
+        killSwitchEquityFallbackLimit > 100
+    ) {
+        throw new Error(
+            `Invalid KILL_SWITCH_EQUITY_FALLBACK_LIMIT: ${process.env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT}. Must be between 1 and 100.`
+        );
+    }
+
+    const killSwitchMonitorErrorLimit = parseInt(
+        process.env.KILL_SWITCH_MONITOR_ERROR_LIMIT || String(killSwitchMaxErrors),
+        10
+    );
+    if (
+        isNaN(killSwitchMonitorErrorLimit) ||
+        killSwitchMonitorErrorLimit < 1 ||
+        killSwitchMonitorErrorLimit > 100
+    ) {
+        throw new Error(
+            `Invalid KILL_SWITCH_MONITOR_ERROR_LIMIT: ${process.env.KILL_SWITCH_MONITOR_ERROR_LIMIT}. Must be between 1 and 100.`
+        );
+    }
+
+    const killSwitchMonitorStaleSeconds = parseInt(
+        process.env.KILL_SWITCH_MONITOR_STALE_SECONDS || '15',
+        10
+    );
+    if (
+        isNaN(killSwitchMonitorStaleSeconds) ||
+        killSwitchMonitorStaleSeconds < 5 ||
+        killSwitchMonitorStaleSeconds > 3600
+    ) {
+        throw new Error(
+            `Invalid KILL_SWITCH_MONITOR_STALE_SECONDS: ${process.env.KILL_SWITCH_MONITOR_STALE_SECONDS}. Must be between 5 and 3600 seconds.`
+        );
+    }
+
     const aggregationWindowSeconds = parseInt(
         process.env.TRADE_AGGREGATION_WINDOW_SECONDS || '300',
         10
@@ -364,6 +406,22 @@ export const ENV = {
     RETRY_LIMIT: parseInt(process.env.RETRY_LIMIT || '3', 10),
     TRADE_MULTIPLIER: parseFloat(process.env.TRADE_MULTIPLIER || '1.0'),
     COPY_PERCENTAGE: parseFloat(process.env.COPY_PERCENTAGE || '10.0'),
+    DAILY_LOSS_CAP_PCT: parseFloat(process.env.DAILY_LOSS_CAP_PCT || '20'),
+    KILL_SWITCH_MAX_ERRORS: parseInt(process.env.KILL_SWITCH_MAX_ERRORS || '5', 10),
+    KILL_SWITCH_EQUITY_FALLBACK_LIMIT: parseInt(
+        process.env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT || '3',
+        10
+    ),
+    KILL_SWITCH_MONITOR_ERROR_LIMIT: parseInt(
+        process.env.KILL_SWITCH_MONITOR_ERROR_LIMIT ||
+            process.env.KILL_SWITCH_MAX_ERRORS ||
+            '5',
+        10
+    ),
+    KILL_SWITCH_MONITOR_STALE_SECONDS: parseInt(
+        process.env.KILL_SWITCH_MONITOR_STALE_SECONDS || '15',
+        10
+    ),
     COPY_STRATEGY_CONFIG: parseCopyStrategy(),
     REQUEST_TIMEOUT_MS: parseInt(process.env.REQUEST_TIMEOUT_MS || '10000', 10),
     NETWORK_RETRY_LIMIT: parseInt(process.env.NETWORK_RETRY_LIMIT || '3', 10),

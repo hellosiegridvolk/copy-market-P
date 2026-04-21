@@ -35,6 +35,11 @@ describe('env.ts configuration', () => {
             'STREAM_HEARTBEAT_INTERVAL_SECONDS',
             'RECONCILIATION_INTERVAL_SECONDS',
             'RECONCILIATION_STALE_ORDER_SECONDS',
+            'DAILY_LOSS_CAP_PCT',
+            'KILL_SWITCH_MAX_ERRORS',
+            'KILL_SWITCH_EQUITY_FALLBACK_LIMIT',
+            'KILL_SWITCH_MONITOR_ERROR_LIMIT',
+            'KILL_SWITCH_MONITOR_STALE_SECONDS',
         ]) {
             delete process.env[key];
         }
@@ -131,6 +136,10 @@ describe('env.ts configuration', () => {
             STREAM_HEARTBEAT_INTERVAL_SECONDS: '12',
             RECONCILIATION_INTERVAL_SECONDS: '18',
             RECONCILIATION_STALE_ORDER_SECONDS: '90',
+            KILL_SWITCH_MAX_ERRORS: '7',
+            KILL_SWITCH_EQUITY_FALLBACK_LIMIT: '4',
+            KILL_SWITCH_MONITOR_ERROR_LIMIT: '6',
+            KILL_SWITCH_MONITOR_STALE_SECONDS: '30',
         });
         expect(env.FETCH_INTERVAL).toBe(5);
         expect(env.RETRY_LIMIT).toBe(5);
@@ -138,6 +147,10 @@ describe('env.ts configuration', () => {
         expect(env.STREAM_HEARTBEAT_INTERVAL_SECONDS).toBe(12);
         expect(env.RECONCILIATION_INTERVAL_SECONDS).toBe(18);
         expect(env.RECONCILIATION_STALE_ORDER_SECONDS).toBe(90);
+        expect(env.KILL_SWITCH_MAX_ERRORS).toBe(7);
+        expect(env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT).toBe(4);
+        expect(env.KILL_SWITCH_MONITOR_ERROR_LIMIT).toBe(6);
+        expect(env.KILL_SWITCH_MONITOR_STALE_SECONDS).toBe(30);
     });
 
     test('defaults work correctly', () => {
@@ -154,5 +167,10 @@ describe('env.ts configuration', () => {
         expect(env.STREAM_HEARTBEAT_INTERVAL_SECONDS).toBe(10);
         expect(env.RECONCILIATION_INTERVAL_SECONDS).toBe(15);
         expect(env.RECONCILIATION_STALE_ORDER_SECONDS).toBe(60);
+        expect(env.DAILY_LOSS_CAP_PCT).toBe(20);
+        expect(env.KILL_SWITCH_MAX_ERRORS).toBe(5);
+        expect(env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT).toBe(3);
+        expect(env.KILL_SWITCH_MONITOR_ERROR_LIMIT).toBe(5);
+        expect(env.KILL_SWITCH_MONITOR_STALE_SECONDS).toBe(15);
     });
 });
