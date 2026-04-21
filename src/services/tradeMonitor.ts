@@ -73,6 +73,10 @@ export const buildActivityRecord = (address: string, activity: any, historicalOn
     detectedAt: Date.now(),
     sourceTrader: address,
     sourceTradeId: activity.transactionHash,
+    streamEventType: null,
+    streamEventStatus: null,
+    streamLastUpdateAt: null,
+    reconciledAt: null,
 });
 
 const init = async (): Promise<number[]> => {

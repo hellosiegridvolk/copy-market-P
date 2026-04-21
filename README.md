@@ -19,6 +19,7 @@ This repository now contains the unpacked application source. The runtime does n
 - Copy sizing strategies with configurable caps
 - Preview mode and live mode
 - Local NeDB persistence for activities and tracked positions
+- Optional Polymarket market/user websocket groundwork with reconciliation fallback polling
 - Explicit persisted trade lifecycle:
   - `new`
   - `processing`
@@ -27,13 +28,13 @@ This repository now contains the unpacked application source. The runtime does n
   - `failed`
   - `retry_exhausted`
   - `partial_fill`
-- Runtime status API with separate monitor/executor heartbeats and queue counts
+- Runtime status API with separate monitor/executor heartbeats, websocket/reconciliation state, and queue counts
 - Health-check script for local storage, RPC, balance, and Polymarket API reachability
 - Jest coverage for DB wrapper behavior, env validation, post-order persistence, copy strategy sizing, and executor lifecycle handling
 
 ## What is not yet production-grade
 
-- No websocket-based market or user reconciliation loop yet
+- Websocket market and user subscriptions now exist as groundwork, but they are still best-effort visibility/reconciliation helpers rather than a full exchange-grade recovery layer
 - Kill-switch equity checks are materially better than free-USDC-only, but they still rely on API-reported position values rather than a full independent reconciliation engine
 - Local file persistence needs explicit backup and log-rotation discipline in any long-running deployment
 - Some secondary historical docs remain informational rather than fully updated operational guides
@@ -55,7 +56,8 @@ This repository now contains the unpacked application source. The runtime does n
 - `PREVIEW_MODE=true` is the recommended first run
 - `PREVIEW_MODE=false` enables live order posting
 - `npm run smoke:live:preflight` is the guarded read-only check to run immediately before the first live startup
-- The status API reports the effective mode, worker heartbeats, queue state, last success, and last error
+- `MARKET_WS_ENABLED`, `USER_WS_ENABLED`, and `RECONCILIATION_ENABLED` let you disable the groundwork streams if you need a polling-only validation pass
+- The status API reports the effective mode, worker heartbeats, stream/reconciliation state, queue state, last success, and last error
 - Default API/UI port is `3000` unless `PORT` is set
 
 ## Local validation flow
@@ -89,7 +91,7 @@ This repository now contains the unpacked application source. The runtime does n
 ## Runtime API surface
 
 - `GET /api/health`: process uptime and timestamp
-- `GET /api/status`: runtime truth, worker heartbeat state, kill switch state, and queue counts
+- `GET /api/status`: runtime truth, worker heartbeat state, stream/reconciliation state, kill switch state, and queue counts
 - `GET /api/config`: effective runtime configuration values
 - `GET /api/trades`: recent persisted trades
 - `GET /docs`: Swagger UI
