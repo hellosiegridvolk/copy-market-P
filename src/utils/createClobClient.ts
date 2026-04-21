@@ -3,6 +3,7 @@ import { ClobClient } from '@polymarket/clob-client';
 import { SignatureType } from '@polymarket/order-utils';
 import { ENV } from '../config/env';
 import Logger from './logger';
+import { resolveApiKeyCreds } from './clobCredentials';
 
 const PROXY_WALLET = ENV.PROXY_WALLET;
 const PRIVATE_KEY = ENV.PRIVATE_KEY;
@@ -51,10 +52,7 @@ const createClobClient = async (): Promise<ClobClient> => {
     console.log = function () {};
     console.error = function () {};
 
-    let creds = await clobClient.createApiKey();
-    if (!creds.key) {
-        creds = await clobClient.deriveApiKey();
-    }
+    const creds = await resolveApiKeyCreds(clobClient);
 
     clobClient = new ClobClient(
         host,

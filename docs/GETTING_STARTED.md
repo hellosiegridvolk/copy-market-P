@@ -28,7 +28,13 @@
 
 1. `npm run validate:handoff`
 2. `npm run health`
-3. `npm start`
+3. If you are still in preview mode, run `npm start`
+4. If you are switching to live mode:
+   - set `PREVIEW_MODE=false`
+   - back up `data/`
+   - set `LIVE_SMOKE_CONFIRM=I_HAVE_BACKED_UP_DATA`
+   - run `npm run smoke:live:preflight`
+   - then run `npm start`
 
 ## Mode expectations
 
@@ -39,6 +45,7 @@
   - best choice for first local validation
 - Live mode:
   - set `PREVIEW_MODE=false`
+  - run `npm run smoke:live:preflight` first
   - only do this after preview validation, wallet funding, and backup preparation
 
 ## Optional stream controls
@@ -64,3 +71,9 @@
 - The websocket/reconciliation layer is groundwork only; it does not replace a full recovery/replay engine
 - No full portfolio accounting engine beyond API-reported balances and positions
 - Secondary documentation outside the core startup/deployment guides still needs a broader editorial pass
+
+## Live smoke notes
+
+- The live smoke preflight is read-only: it validates auth, open-order lookup, RPC, and wallet prerequisites
+- It does not place or cancel orders
+- It may derive or create a CLOB API key if the wallet has not been initialized for authenticated requests yet

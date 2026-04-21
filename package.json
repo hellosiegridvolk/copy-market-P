@@ -37,6 +37,7 @@
     "audit": "ts-node src/scripts/auditCopyTradingAlgorithmFixed.ts",
     "audit-old": "ts-node src/scripts/auditCopyTradingAlgorithm.ts",
     "health-check": "ts-node src/scripts/healthCheck.ts",
+    "smoke:live:preflight": "ts-node src/scripts/liveSmokePreflight.ts",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
     "check-secrets": "bash scripts/check-env-safety.sh",
