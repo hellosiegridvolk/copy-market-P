@@ -65,17 +65,29 @@
   - aggregated buy batches now fan normalized results back across every underlying trade record
 - Runtime truthfulness:
   - `/api/status` now reports separate monitor and executor worker state
-  - queue counts are derived from persisted trade records
+  - queue counts are derived from persisted trade records for configured tracked traders only, instead of every `.db` artifact in `data/`
   - kill switch state, last success, last error, and worker staleness are surfaced
+  - runtime risk telemetry now exposes equity source, balance/position snapshots, drawdown percentage, and consecutive error counters
+  - degraded live-mode equity snapshots no longer masquerade as trustworthy full-account equity
+  - live mode now refuses to continue if the monitor worker is stopped or never published a heartbeat
+  - `/api/status` now marks stopped workers and missing worker heartbeats as degraded instead of optimistic healthy
   - standalone `swagger` entrypoint now actually starts the server
+  - empty-datastore bootstrap imports now quarantine first-run historical trades as `skipped` before live monitoring continues
 - Package and script truthfulness:
   - `start` now builds before launching the compiled app
+  - `prestart` now uses a cross-platform Node wrapper instead of `|| true`, so `npm start` no longer breaks on Windows shells
   - `swagger` now builds and launches a real server entrypoint
   - `validate:handoff` is now a clean build-and-test gate instead of implying env-dependent health validation
 - Preview-safe startup and validation:
   - `PREVIEW_MODE=true` no longer requires a live private key for the first validation pass
   - startup skips authenticated CLOB client initialization in preview mode
   - the starter `RPC_URL` was updated to a currently reachable public Polygon endpoint for local preview validation
+- Kill-switch hardening:
+  - executor now blocks live trading when only a balance-only fallback snapshot is available
+  - repeated degraded equity snapshots can now activate the kill switch instead of silently continuing
+  - repeated monitor fetch failures now accumulate into shared runtime risk state
+  - stale monitor heartbeats now trip the executor-side kill switch guard in live mode
+  - `.env.example` and env validation now include explicit kill-switch tuning controls for monitor errors, stale monitor heartbeats, and degraded equity snapshots
 - Docs and env truthfulness:
   - README and core docs now describe the actual local NeDB architecture
   - `.env.example` clearly separates preview-first guidance, preview/live requirements, and optional tuning
@@ -85,14 +97,17 @@
 - Tests:
   - DB wrapper safety tests expanded
   - env validation tests expanded for preview-mode behavior
-  - executor lifecycle tests expanded
+  - executor lifecycle tests now cover degraded equity snapshot and stale monitor kill-switch behavior
+  - executor lifecycle tests now cover the monitor-not-running kill-switch path
+  - status route tests now verify that stopped workers and missing heartbeats are surfaced as degraded
   - post-order persistence tests rewritten around normalized outcomes
 
 ## 4. What remains blocked
 
 - No websocket market/user stream or reconciliation layer yet
-- Kill switch is materially better than free-USDC-only, but it still depends on API-sourced balance/position values rather than a dedicated accounting engine
-- No live-mode smoke test was executed because no real live trading credentials are committed in this branch
+- Kill switch now tracks fuller runtime risk and refuses degraded live-mode equity snapshots, but it still depends on API-sourced balance/position values rather than a dedicated accounting engine
+- No live order-placement smoke test was executed; validation in this branch stopped at authenticated preflight plus a short live startup/status smoke
+- Secondary editorial cleanup is still pending in some non-core docs such as `docs/IMPROVEMENTS.md`, `docs/LOGGING_PREVIEW.md`, and translated README variants
 
 ## 5. Exact local verification commands to run next
 
@@ -103,6 +118,7 @@
    - keep `PREVIEW_MODE=true`
    - leave `PRIVATE_KEY` blank for preview mode
    - if `.env` already exists, compare it with `.env.example`
+   - review `KILL_SWITCH_EQUITY_FALLBACK_LIMIT`, `KILL_SWITCH_MONITOR_ERROR_LIMIT`, and `KILL_SWITCH_MONITOR_STALE_SECONDS` before live mode
 5. `npm run validate:handoff`
 6. `npm run health`
 7. `npm start`
@@ -115,7 +131,19 @@
 
 - `npm run validate:handoff`
 - `npm run health`
+- `npm run build`
+- `npx jest src/__tests__/statusRoute.test.ts src/__tests__/tradeMonitor.bootstrap.test.ts src/__tests__/tradeExecutor.lifecycle.test.ts --runInBand`
 - Preview-mode startup smoke test using the local starter `.env`
   - `GET /api/health` returned `200`
   - `GET /api/status` returned `200`
   - `GET /docs` returned `200`
+- Live authenticated preflight using temporary process-level env overrides only
+  - wallet type detection succeeded
+  - authenticated API-key lookup succeeded
+  - authenticated open-order lookup succeeded
+  - no orders were placed or canceled
+- Short live startup/status smoke using temporary process-level env overrides only
+  - app reached healthy `live` mode
+  - `GET /api/status` returned `200`
+  - queue counts stayed at `0` for `new`, `processing`, and `failed`
+  - the process was stopped manually immediately after verification

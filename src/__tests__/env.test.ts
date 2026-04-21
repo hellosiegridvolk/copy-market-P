@@ -1,4 +1,6 @@
 describe('env.ts configuration', () => {
+    let consoleErrorSpy: jest.SpyInstance;
+
     const baseEnv = {
         USER_ADDRESSES: '0x1234567890abcdef1234567890abcdef12345678',
         PROXY_WALLET: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
@@ -26,6 +28,11 @@ describe('env.ts configuration', () => {
             'MAX_ORDER_SIZE_USD',
             'MIN_ORDER_SIZE_USD',
             'PREVIEW_MODE',
+            'DAILY_LOSS_CAP_PCT',
+            'KILL_SWITCH_MAX_ERRORS',
+            'KILL_SWITCH_EQUITY_FALLBACK_LIMIT',
+            'KILL_SWITCH_MONITOR_ERROR_LIMIT',
+            'KILL_SWITCH_MONITOR_STALE_SECONDS',
         ]) {
             delete process.env[key];
         }
@@ -34,11 +41,13 @@ describe('env.ts configuration', () => {
     beforeEach(() => {
         jest.resetModules();
         jest.doMock('dotenv', () => ({ config: jest.fn() }));
+        consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         resetEnv();
     });
 
     afterEach(() => {
         jest.dontMock('dotenv');
+        consoleErrorSpy.mockRestore();
         resetEnv();
     });
 
@@ -113,9 +122,20 @@ describe('env.ts configuration', () => {
     });
 
     test('parses numeric config correctly', () => {
-        const env = loadEnv({ FETCH_INTERVAL: '5', RETRY_LIMIT: '5' });
+        const env = loadEnv({
+            FETCH_INTERVAL: '5',
+            RETRY_LIMIT: '5',
+            KILL_SWITCH_MAX_ERRORS: '7',
+            KILL_SWITCH_EQUITY_FALLBACK_LIMIT: '4',
+            KILL_SWITCH_MONITOR_ERROR_LIMIT: '6',
+            KILL_SWITCH_MONITOR_STALE_SECONDS: '30',
+        });
         expect(env.FETCH_INTERVAL).toBe(5);
         expect(env.RETRY_LIMIT).toBe(5);
+        expect(env.KILL_SWITCH_MAX_ERRORS).toBe(7);
+        expect(env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT).toBe(4);
+        expect(env.KILL_SWITCH_MONITOR_ERROR_LIMIT).toBe(6);
+        expect(env.KILL_SWITCH_MONITOR_STALE_SECONDS).toBe(30);
     });
 
     test('defaults work correctly', () => {
@@ -125,5 +145,10 @@ describe('env.ts configuration', () => {
         expect(env.TOO_OLD_TIMESTAMP).toBe(24);
         expect(env.TRADE_AGGREGATION_ENABLED).toBe(false);
         expect(env.PREVIEW_MODE).toBe(false);
+        expect(env.DAILY_LOSS_CAP_PCT).toBe(20);
+        expect(env.KILL_SWITCH_MAX_ERRORS).toBe(5);
+        expect(env.KILL_SWITCH_EQUITY_FALLBACK_LIMIT).toBe(3);
+        expect(env.KILL_SWITCH_MONITOR_ERROR_LIMIT).toBe(5);
+        expect(env.KILL_SWITCH_MONITOR_STALE_SECONDS).toBe(15);
     });
 });
