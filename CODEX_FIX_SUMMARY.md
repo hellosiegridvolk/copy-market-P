@@ -15,13 +15,17 @@
 - `.gitignore`
 - `src/config/db.ts`
 - `src/config/env.ts`
+- `src/interfaces/Reconciliation.ts`
 - `src/models/userHistory.ts`
+- `src/models/runtimeState.ts`
 - `src/interfaces/User.ts`
 - `src/index.ts`
 - `src/services/tradeMonitor.ts`
 - `src/services/tradeExecutor.ts`
 - `src/services/runtimeStatus.ts`
 - `src/services/accounting.ts`
+- `src/services/reconciliation.ts`
+- `src/services/polymarketStreams.ts`
 - `src/utils/postOrder.ts`
 - `src/utils/healthCheck.ts`
 - `src/scripts/healthCheck.ts`
@@ -32,6 +36,8 @@
 - `src/__tests__/postOrder.test.ts`
 - `src/__tests__/tradeExecutor.lifecycle.test.ts`
 - `src/__tests__/accounting.test.ts`
+- `src/__tests__/reconciliation.test.ts`
+- `src/__tests__/statusRoute.test.ts`
 - `docs/QUICK_START.md`
 - `docs/GETTING_STARTED.md`
 - `docs/DEPLOYMENT.md`
@@ -67,6 +73,7 @@
   - aggregated buy batches now fan normalized results back across every underlying trade record
 - Runtime truthfulness:
   - `/api/status` now reports separate monitor and executor worker state
+  - reconciliation now persists queued user-stream events and the latest reconciliation snapshot into local NeDB files so restart recovery keeps the last known pending-event picture
   - queue counts are derived from persisted trade records for configured tracked traders only, instead of every `.db` artifact in `data/`
   - kill switch state, last success, last error, and worker staleness are surfaced
   - runtime risk telemetry now exposes equity source, balance/position snapshots, drawdown percentage, and consecutive error counters
@@ -91,6 +98,7 @@
   - stale monitor heartbeats now trip the executor-side kill switch guard in live mode
   - local pending buy exposure is now reserved into the runtime risk snapshot so the kill switch can stop execution when local commitments outrun free USDC
   - `/api/status` now surfaces the local pending-exposure overlay so operators can see reserved buy exposure and available balance after pending local commitments
+  - `/api/status` now surfaces restored reconciliation backlog counts and the last persisted reconciliation snapshot timestamp
   - `.env.example` and env validation now include explicit kill-switch tuning controls for monitor errors, stale monitor heartbeats, and degraded equity snapshots
 - Docs and env truthfulness:
   - README and core docs now describe the actual local NeDB architecture
@@ -105,10 +113,12 @@
   - executor lifecycle tests now cover the monitor-not-running kill-switch path
   - status route tests now verify that stopped workers and missing heartbeats are surfaced as degraded
   - post-order persistence tests rewritten around normalized outcomes
+  - reconciliation tests now cover persisted event journaling and snapshot restore behavior
+  - status route tests now cover restored reconciliation backlog visibility
 
 ## 4. What remains blocked
 
-- Websocket and reconciliation groundwork is merged, but it is still not a full replay/recovery engine
+- Websocket and reconciliation groundwork now persists queued recovery state locally, but it is still not a full replay/recovery engine with an external replay source
 - Kill switch now tracks local pending exposure as well as runtime risk, but it still depends on API-sourced balance/position values rather than a full independent accounting engine
 - No live order-placement smoke test was executed; validation in this branch stopped at authenticated preflight plus a short live startup/status smoke
 - Secondary editorial cleanup is still pending in some non-core docs such as `docs/IMPROVEMENTS.md`, `docs/LOGGING_PREVIEW.md`, and translated README variants

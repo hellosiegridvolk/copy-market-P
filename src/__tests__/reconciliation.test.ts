@@ -15,6 +15,20 @@ jest.mock('../models/userHistory', () => ({
     })),
 }));
 
+const listPersistedReconciliationEvents = jest.fn().mockResolvedValue([]);
+const loadReconciliationSnapshot = jest.fn().mockResolvedValue(null);
+const removePersistedReconciliationEvent = jest.fn().mockResolvedValue(undefined);
+const saveReconciliationSnapshot = jest.fn().mockResolvedValue(undefined);
+const upsertPersistedReconciliationEvent = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('../models/runtimeState', () => ({
+    listPersistedReconciliationEvents,
+    loadReconciliationSnapshot,
+    removePersistedReconciliationEvent,
+    saveReconciliationSnapshot,
+    upsertPersistedReconciliationEvent,
+}));
+
 jest.mock('../utils/logger', () => ({
     __esModule: true,
     default: {
@@ -29,7 +43,10 @@ import {
     buildPatchFromOpenOrder,
     buildPatchFromStreamEvent,
     extractUserStreamEvents,
+    recordUserStreamEvent,
+    restorePersistedReconciliationState,
 } from '../services/reconciliation';
+import { getRuntimeStatus, resetRuntimeStatus } from '../services/runtimeStatus';
 
 const makeTrade = (overrides: Record<string, unknown> = {}) =>
     ({
@@ -50,6 +67,13 @@ const makeTrade = (overrides: Record<string, unknown> = {}) =>
     }) as any;
 
 describe('reconciliation groundwork helpers', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        resetRuntimeStatus();
+        listPersistedReconciliationEvents.mockResolvedValue([]);
+        loadReconciliationSnapshot.mockResolvedValue(null);
+    });
+
     test('extractUserStreamEvents expands trade payloads by referenced order ids', () => {
         const events = extractUserStreamEvents({
             event_type: 'trade',
@@ -144,5 +168,75 @@ describe('reconciliation groundwork helpers', () => {
                 lastError: 'remaining_size_unfilled',
             })
         );
+    });
+
+    test('recordUserStreamEvent persists normalized events for restart recovery', async () => {
+        const persisted = await recordUserStreamEvent({
+            event_type: 'order',
+            type: 'PLACEMENT',
+            id: 'order-1',
+            size_matched: '0',
+            timestamp: '1672290701',
+            market: 'market-1',
+            asset_id: 'asset-1',
+        });
+
+        expect(persisted).toBe(1);
+        expect(upsertPersistedReconciliationEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+                _id: 'order-1',
+                orderId: 'order-1',
+                kind: 'order',
+                status: 'PLACEMENT',
+                market: 'market-1',
+                assetId: 'asset-1',
+            })
+        );
+
+        const runtime = getRuntimeStatus();
+        expect(runtime.reconciliation.queuedEvents).toBe(1);
+        expect(runtime.reconciliation.persistedQueuedEvents).toBe(1);
+        expect(saveReconciliationSnapshot).toHaveBeenCalled();
+    });
+
+    test('restorePersistedReconciliationState hydrates runtime truth from disk', async () => {
+        loadReconciliationSnapshot.mockResolvedValue({
+            savedAt: 1700000005000,
+            scannedTrades: 4,
+            pendingTrades: 2,
+            queuedEvents: 1,
+            persistedQueuedEvents: 1,
+            restoredQueuedEvents: 0,
+            reconciledTrades: 8,
+            lastLoopAt: 1700000004000,
+            lastSuccessAt: 1700000004500,
+            lastOrderId: 'order-1',
+            lastEventType: 'trade',
+            lastEventStatus: 'CONFIRMED',
+        });
+        listPersistedReconciliationEvents.mockResolvedValue([
+            {
+                _id: 'order-1',
+                orderId: 'order-1',
+                kind: 'trade',
+                status: 'CONFIRMED',
+                sizeMatched: 10,
+                market: 'market-1',
+                assetId: 'asset-1',
+                timestamp: 1700000000000,
+                savedAt: 1700000001000,
+            },
+        ]);
+
+        await restorePersistedReconciliationState();
+
+        const runtime = getRuntimeStatus();
+        expect(runtime.reconciliation.queuedEvents).toBe(1);
+        expect(runtime.reconciliation.persistedQueuedEvents).toBe(1);
+        expect(runtime.reconciliation.restoredQueuedEvents).toBe(1);
+        expect(runtime.reconciliation.reconciledTrades).toBe(8);
+        expect(runtime.reconciliation.lastOrderId).toBe('order-1');
+        expect(runtime.reconciliation.lastPersistenceAt).toBe(1700000005000);
+        expect(runtime.reconciliation.restoredFromDiskAt).toEqual(expect.any(Number));
     });
 });

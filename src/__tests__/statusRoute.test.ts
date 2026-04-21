@@ -167,4 +167,41 @@ describe('/api/status truthfulness', () => {
         expect(status.risk.reservedBuyExposure).toBe(130);
         expect(status.risk.availableBalanceAfterPending).toBe(-30);
     });
+
+    test('surfaces restored reconciliation backlog from persisted state', async () => {
+        updateRuntimeStatus({
+            mode: 'live',
+            monitor: {
+                running: true,
+                lastLoopAt: Date.now(),
+            },
+            executor: {
+                running: true,
+                lastLoopAt: Date.now(),
+            },
+            reconciliation: {
+                enabled: true,
+                running: true,
+                queuedEvents: 2,
+                persistedQueuedEvents: 2,
+                restoredQueuedEvents: 2,
+                scannedTrades: 5,
+                pendingTrades: 2,
+                reconciledTrades: 7,
+                lastPersistenceAt: Date.now() - 1000,
+                restoredFromDiskAt: Date.now() - 500,
+                lastOrderId: 'order-1',
+                lastEventType: 'trade',
+                lastEventStatus: 'CONFIRMED',
+            },
+        });
+
+        const status = await fetchStatus();
+
+        expect(status.reconciliation.queuedEvents).toBe(2);
+        expect(status.reconciliation.persistedQueuedEvents).toBe(2);
+        expect(status.reconciliation.restoredQueuedEvents).toBe(2);
+        expect(status.reconciliation.lastPersistenceAt).not.toBeNull();
+        expect(status.reconciliation.restoredFromDiskAt).not.toBeNull();
+    });
 });

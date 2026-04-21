@@ -1,9 +1,21 @@
 import { ClobClient, OpenOrder } from '@polymarket/clob-client';
 import { ENV } from '../config/env';
+import {
+    NormalizedUserStreamEvent,
+    PersistedUserStreamEvent,
+    ReconciliationSnapshot,
+} from '../interfaces/Reconciliation';
 import { TradeLifecycleStatus, UserActivityInterface } from '../interfaces/User';
+import {
+    listPersistedReconciliationEvents,
+    loadReconciliationSnapshot,
+    removePersistedReconciliationEvent,
+    saveReconciliationSnapshot,
+    upsertPersistedReconciliationEvent,
+} from '../models/runtimeState';
 import { getUserActivityModel } from '../models/userHistory';
 import Logger from '../utils/logger';
-import { updateReconciliationStatus } from './runtimeStatus';
+import { getRuntimeStatus, updateReconciliationStatus } from './runtimeStatus';
 
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const RETRY_LIMIT = ENV.RETRY_LIMIT;
@@ -15,8 +27,6 @@ const userActivityModels = USER_ADDRESSES.map((address) => ({
     address,
     model: getUserActivityModel(address),
 }));
-
-type StreamEventKind = 'order' | 'trade';
 
 interface UserTradeMakerOrder {
     order_id?: string;
@@ -44,16 +54,6 @@ interface RawUserOrderEvent {
     asset_id?: string;
 }
 
-export interface NormalizedUserStreamEvent {
-    orderId: string;
-    kind: StreamEventKind;
-    status: string;
-    sizeMatched: number | null;
-    market?: string;
-    assetId?: string;
-    timestamp: number | null;
-}
-
 const TERMINAL_TRADE_STATUSES = new Set<TradeLifecycleStatus>([
     'executed',
     'skipped',
@@ -64,8 +64,48 @@ const activeEventQueue = new Map<string, NormalizedUserStreamEvent>();
 
 let isRunning = false;
 let totalReconciledTrades = 0;
+let lastRestoredQueuedEvents = 0;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const toPersistedEvent = (event: NormalizedUserStreamEvent): PersistedUserStreamEvent => ({
+    _id: event.orderId,
+    ...event,
+    savedAt: Date.now(),
+});
+
+const buildSnapshot = (): ReconciliationSnapshot => {
+    const reconciliation = getRuntimeStatus().reconciliation;
+
+    return {
+        savedAt: Date.now(),
+        scannedTrades: reconciliation.scannedTrades,
+        pendingTrades: reconciliation.pendingTrades,
+        queuedEvents: reconciliation.queuedEvents,
+        persistedQueuedEvents: reconciliation.persistedQueuedEvents,
+        restoredQueuedEvents: reconciliation.restoredQueuedEvents,
+        reconciledTrades: reconciliation.reconciledTrades,
+        lastLoopAt: reconciliation.lastLoopAt,
+        lastSuccessAt: reconciliation.lastSuccessAt,
+        lastError: reconciliation.lastError,
+        lastErrorAt: reconciliation.lastErrorAt,
+        lastOrderId: reconciliation.lastOrderId,
+        lastEventType: reconciliation.lastEventType,
+        lastEventStatus: reconciliation.lastEventStatus,
+    };
+};
+
+const persistSnapshot = async () => {
+    try {
+        await saveReconciliationSnapshot(buildSnapshot());
+    } catch (error) {
+        Logger.warning(
+            `Unable to persist reconciliation snapshot: ${
+                error instanceof Error ? error.message : String(error)
+            }`
+        );
+    }
+};
 
 const toNumber = (value: unknown): number | null => {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -117,6 +157,52 @@ const isCandidateTrade = (trade: UserActivityInterface): boolean => {
     }
 
     return !TERMINAL_TRADE_STATUSES.has(trade.status);
+};
+
+export const restorePersistedReconciliationState = async () => {
+    const [snapshot, persistedEvents] = await Promise.all([
+        loadReconciliationSnapshot(),
+        listPersistedReconciliationEvents(),
+    ]);
+
+    activeEventQueue.clear();
+    for (const event of persistedEvents) {
+        activeEventQueue.set(event.orderId, {
+            orderId: event.orderId,
+            kind: event.kind,
+            status: event.status,
+            sizeMatched: event.sizeMatched,
+            market: event.market,
+            assetId: event.assetId,
+            timestamp: event.timestamp,
+        });
+    }
+
+    lastRestoredQueuedEvents = persistedEvents.length;
+    totalReconciledTrades = snapshot?.reconciledTrades ?? 0;
+
+    updateReconciliationStatus({
+        scannedTrades: snapshot?.scannedTrades ?? 0,
+        pendingTrades: snapshot?.pendingTrades ?? 0,
+        queuedEvents: activeEventQueue.size,
+        persistedQueuedEvents: activeEventQueue.size,
+        restoredQueuedEvents: lastRestoredQueuedEvents,
+        reconciledTrades: totalReconciledTrades,
+        lastLoopAt: snapshot?.lastLoopAt,
+        lastSuccessAt: snapshot?.lastSuccessAt,
+        lastError: snapshot?.lastError,
+        lastErrorAt: snapshot?.lastErrorAt,
+        lastOrderId: snapshot?.lastOrderId,
+        lastEventType: snapshot?.lastEventType,
+        lastEventStatus: snapshot?.lastEventStatus,
+        lastPersistenceAt: snapshot?.savedAt,
+        restoredFromDiskAt: snapshot || persistedEvents.length > 0 ? Date.now() : undefined,
+    });
+
+    return {
+        snapshot,
+        persistedEvents,
+    };
 };
 
 export const extractUserStreamEvents = (payload: unknown): NormalizedUserStreamEvent[] => {
@@ -355,18 +441,22 @@ const queueEvent = (event: NormalizedUserStreamEvent) => {
     activeEventQueue.set(event.orderId, event);
 };
 
-export const recordUserStreamEvent = (payload: unknown): number => {
+export const recordUserStreamEvent = async (payload: unknown): Promise<number> => {
     const normalizedEvents = extractUserStreamEvents(payload);
 
     for (const event of normalizedEvents) {
         queueEvent(event);
+        await upsertPersistedReconciliationEvent(toPersistedEvent(event));
         updateReconciliationStatus({
             queuedEvents: activeEventQueue.size,
+            persistedQueuedEvents: activeEventQueue.size,
             lastOrderId: event.orderId,
             lastEventType: event.kind,
             lastEventStatus: event.status,
             lastSuccessAt: Date.now(),
+            lastPersistenceAt: Date.now(),
         });
+        await persistSnapshot();
     }
 
     return normalizedEvents.length;
@@ -411,7 +501,9 @@ const runReconciliationCycle = async (clobClient: ClobClient | null) => {
         scannedTrades: candidates.length,
         pendingTrades: candidates.length,
         queuedEvents: activeEventQueue.size,
+        persistedQueuedEvents: activeEventQueue.size,
     });
+    await persistSnapshot();
 
     for (const trade of candidates) {
         if (!trade.orderId) {
@@ -423,14 +515,18 @@ const runReconciliationCycle = async (clobClient: ClobClient | null) => {
             const patch = buildPatchFromStreamEvent(trade, queuedEvent);
             await applyPatch(trade, patch);
             activeEventQueue.delete(trade.orderId);
+            await removePersistedReconciliationEvent(trade.orderId);
             reconciledThisCycle += 1;
 
             updateReconciliationStatus({
                 queuedEvents: activeEventQueue.size,
+                persistedQueuedEvents: activeEventQueue.size,
                 lastOrderId: trade.orderId,
                 lastEventType: queuedEvent.kind,
                 lastEventStatus: queuedEvent.status,
+                lastPersistenceAt: Date.now(),
             });
+            await persistSnapshot();
             continue;
         }
 
@@ -450,6 +546,7 @@ const runReconciliationCycle = async (clobClient: ClobClient | null) => {
                     lastEventType: 'rest_reconciliation',
                     lastEventStatus: String(openOrder.status || ''),
                 });
+                await persistSnapshot();
             } catch (error) {
                 Logger.warning(
                     `Reconciliation lookup failed for order ${trade.orderId}: ${
@@ -466,17 +563,21 @@ const runReconciliationCycle = async (clobClient: ClobClient | null) => {
         lastSuccessAt: Date.now(),
         reconciledTrades: totalReconciledTrades,
         queuedEvents: activeEventQueue.size,
+        persistedQueuedEvents: activeEventQueue.size,
         pendingTrades: candidates.length,
     });
+    await persistSnapshot();
 };
 
 export const stopTradeReconciliation = () => {
     isRunning = false;
     updateReconciliationStatus({ running: false });
+    void persistSnapshot();
 };
 
 export const startTradeReconciliation = (clobClient: ClobClient | null) => {
     totalReconciledTrades = 0;
+    lastRestoredQueuedEvents = 0;
     activeEventQueue.clear();
 
     if (!RECONCILIATION_ENABLED) {
@@ -484,7 +585,10 @@ export const startTradeReconciliation = (clobClient: ClobClient | null) => {
             enabled: false,
             running: false,
             queuedEvents: 0,
+            persistedQueuedEvents: 0,
+            restoredQueuedEvents: 0,
         });
+        void persistSnapshot();
         return;
     }
 
@@ -493,18 +597,29 @@ export const startTradeReconciliation = (clobClient: ClobClient | null) => {
     }
 
     isRunning = true;
-    updateReconciliationStatus({
-        enabled: true,
-        running: true,
-        queuedEvents: 0,
-        scannedTrades: 0,
-        pendingTrades: 0,
-        reconciledTrades: 0,
-        lastError: undefined,
-        lastErrorAt: undefined,
-    });
-
     const loop = async () => {
+        try {
+            await restorePersistedReconciliationState();
+        } catch (error) {
+            Logger.warning(
+                `Unable to restore reconciliation state from disk: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+        }
+
+        updateReconciliationStatus({
+            enabled: true,
+            running: true,
+            queuedEvents: activeEventQueue.size,
+            persistedQueuedEvents: activeEventQueue.size,
+            restoredQueuedEvents: lastRestoredQueuedEvents,
+            scannedTrades: getRuntimeStatus().reconciliation.scannedTrades || 0,
+            pendingTrades: getRuntimeStatus().reconciliation.pendingTrades || 0,
+            reconciledTrades: totalReconciledTrades,
+        });
+        await persistSnapshot();
+
         while (isRunning) {
             try {
                 await runReconciliationCycle(clobClient);
@@ -514,6 +629,7 @@ export const startTradeReconciliation = (clobClient: ClobClient | null) => {
                     lastError: message,
                     lastErrorAt: Date.now(),
                 });
+                await persistSnapshot();
                 Logger.error(`Trade reconciliation error: ${message}`);
             }
 
