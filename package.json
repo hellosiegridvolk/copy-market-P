@@ -7,7 +7,7 @@
     "help": "ts-node src/scripts/help.ts",
     "setup": "node src/scripts/setup.js",
     "build": "tsc",
-    "prestart": "npm audit --omit=dev || true",
+    "prestart": "node src/scripts/prestart.js",
     "start": "npm run build && node dist/index.js",
     "dev": "ts-node src/index.ts",
     "check-allowance": "ts-node src/scripts/checkAllowance.ts",

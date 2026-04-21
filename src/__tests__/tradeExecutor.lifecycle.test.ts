@@ -3,6 +3,12 @@ jest.mock('../config/env', () => ({
         USER_ADDRESSES: ['0xtrader'],
         RETRY_LIMIT: 2,
         PROXY_WALLET: '0xproxy',
+        PREVIEW_MODE: false,
+        DAILY_LOSS_CAP_PCT: 20,
+        KILL_SWITCH_MAX_ERRORS: 5,
+        KILL_SWITCH_EQUITY_FALLBACK_LIMIT: 3,
+        KILL_SWITCH_MONITOR_ERROR_LIMIT: 5,
+        KILL_SWITCH_MONITOR_STALE_SECONDS: 15,
         TRADE_AGGREGATION_ENABLED: false,
         TRADE_AGGREGATION_WINDOW_SECONDS: 10,
     },
@@ -35,11 +41,19 @@ jest.mock('../utils/telegram', () => ({
 }));
 
 import tradeExecutor, { stopTradeExecutor } from '../services/tradeExecutor';
+import { getRuntimeStatus, resetRuntimeStatus, updateRuntimeStatus } from '../services/runtimeStatus';
 
 const postOrder = require('../utils/postOrder').default as jest.Mock;
+const fetchData = require('../utils/fetchData') as jest.Mock;
 
 const waitForExecutorCycle = async () => {
     await new Promise((resolve) => setTimeout(resolve, 350));
+};
+
+const waitForExecutorCycles = async (count: number) => {
+    for (let index = 0; index < count; index += 1) {
+        await waitForExecutorCycle();
+    }
 };
 
 const makeTrade = (overrides: Record<string, unknown> = {}) => ({
@@ -64,12 +78,21 @@ const makeTrade = (overrides: Record<string, unknown> = {}) => ({
 describe('trade executor lifecycle persistence', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        resetRuntimeStatus();
+        updateRuntimeStatus({
+            monitor: {
+                running: true,
+                lastLoopAt: Date.now(),
+            },
+        });
         find.mockReturnValue({ exec: jest.fn().mockResolvedValue([]) });
+        fetchData.mockResolvedValue([]);
     });
 
     afterEach(async () => {
         stopTradeExecutor();
         await new Promise((resolve) => setTimeout(resolve, 10));
+        resetRuntimeStatus();
     });
 
     test('new trade moves from processing to executed', async () => {
@@ -190,5 +213,64 @@ describe('trade executor lifecycle persistence', () => {
             'trade-4',
             expect.objectContaining({ status: 'processing' })
         );
+    });
+
+    test('live mode trips the kill switch after repeated degraded equity snapshots', async () => {
+        const trade = makeTrade({ _id: 'trade-5' });
+        find.mockReturnValue({ exec: jest.fn().mockResolvedValue([trade]) });
+        fetchData.mockRejectedValue(new Error('positions down'));
+
+        const loop = tradeExecutor({} as any);
+        await waitForExecutorCycles(4);
+        stopTradeExecutor();
+        await loop;
+
+        const runtime = getRuntimeStatus();
+        expect(postOrder).not.toHaveBeenCalled();
+        expect(runtime.killSwitchActive).toBe(true);
+        expect(runtime.killSwitchReason).toBe('equity_snapshot_degraded');
+        expect(runtime.risk.equitySource).toBe('balance_only_fallback');
+        expect(runtime.risk.consecutiveEquitySnapshotFailures).toBeGreaterThanOrEqual(3);
+    });
+
+    test('live mode trips the kill switch when the monitor heartbeat is stale', async () => {
+        const trade = makeTrade({ _id: 'trade-6' });
+        find.mockReturnValue({ exec: jest.fn().mockResolvedValue([trade]) });
+        updateRuntimeStatus({
+            monitor: {
+                running: true,
+                lastLoopAt: Date.now() - 20000,
+            },
+        });
+
+        const loop = tradeExecutor({} as any);
+        await waitForExecutorCycle();
+        stopTradeExecutor();
+        await loop;
+
+        const runtime = getRuntimeStatus();
+        expect(postOrder).not.toHaveBeenCalled();
+        expect(runtime.killSwitchActive).toBe(true);
+        expect(runtime.killSwitchReason).toBe('monitor_worker_stale');
+    });
+
+    test('live mode trips the kill switch when the monitor is not running', async () => {
+        const trade = makeTrade({ _id: 'trade-7' });
+        find.mockReturnValue({ exec: jest.fn().mockResolvedValue([trade]) });
+        updateRuntimeStatus({
+            monitor: {
+                running: false,
+            },
+        });
+
+        const loop = tradeExecutor({} as any);
+        await waitForExecutorCycle();
+        stopTradeExecutor();
+        await loop;
+
+        const runtime = getRuntimeStatus();
+        expect(postOrder).not.toHaveBeenCalled();
+        expect(runtime.killSwitchActive).toBe(true);
+        expect(runtime.killSwitchReason).toBe('monitor_worker_not_running');
     });
 });
