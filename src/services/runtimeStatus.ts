@@ -42,6 +42,17 @@ export interface RiskRuntimeStatus {
     dailyStartEquity?: number;
     dailyLossPct?: number;
     equitySource: EquitySnapshotSource;
+    accountingMode: 'unknown' | 'api_only' | 'api_plus_local_pending';
+    queuedBuyExposure: number;
+    processingBuyExposure: number;
+    retryableBuyExposure: number;
+    bufferedBuyExposure: number;
+    reservedBuyExposure: number;
+    pendingSellExposure: number;
+    availableBalanceAfterPending?: number;
+    activePendingTradeCount: number;
+    activePendingBuyCount: number;
+    bufferedTradeCount: number;
     lastEquityAt?: number;
     lastEquityError?: string;
     lastEquityErrorAt?: number;
@@ -90,6 +101,16 @@ const createReconciliationState = (): ReconciliationRuntimeStatus => ({
 
 const createRiskState = (): RiskRuntimeStatus => ({
     equitySource: 'unknown',
+    accountingMode: 'unknown',
+    queuedBuyExposure: 0,
+    processingBuyExposure: 0,
+    retryableBuyExposure: 0,
+    bufferedBuyExposure: 0,
+    reservedBuyExposure: 0,
+    pendingSellExposure: 0,
+    activePendingTradeCount: 0,
+    activePendingBuyCount: 0,
+    bufferedTradeCount: 0,
     consecutiveExecutionErrors: 0,
     consecutiveMonitorErrors: 0,
     consecutiveEquitySnapshotFailures: 0,

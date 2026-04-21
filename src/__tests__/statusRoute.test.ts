@@ -128,4 +128,43 @@ describe('/api/status truthfulness', () => {
         expect(status.queue.new).toBe(0);
         expect(status.dataFiles).toBe(1);
     });
+
+    test('surfaces local accounting exposure when pending commitments outrun free balance', async () => {
+        updateRuntimeStatus({
+            mode: 'live',
+            monitor: {
+                running: true,
+                lastLoopAt: Date.now(),
+            },
+            executor: {
+                running: true,
+                lastLoopAt: Date.now(),
+            },
+            risk: {
+                equitySource: 'balance_plus_positions',
+                accountingMode: 'api_plus_local_pending',
+                freeBalance: 100,
+                queuedBuyExposure: 80,
+                processingBuyExposure: 50,
+                retryableBuyExposure: 0,
+                bufferedBuyExposure: 0,
+                reservedBuyExposure: 130,
+                pendingSellExposure: 0,
+                availableBalanceAfterPending: -30,
+                activePendingTradeCount: 2,
+                activePendingBuyCount: 2,
+                bufferedTradeCount: 0,
+                consecutiveExecutionErrors: 0,
+                consecutiveMonitorErrors: 0,
+                consecutiveEquitySnapshotFailures: 0,
+            },
+        });
+
+        const status = await fetchStatus();
+
+        expect(status.degradedReasons).toContain('pending_exposure_over_limit');
+        expect(status.risk.accountingMode).toBe('api_plus_local_pending');
+        expect(status.risk.reservedBuyExposure).toBe(130);
+        expect(status.risk.availableBalanceAfterPending).toBe(-30);
+    });
 });

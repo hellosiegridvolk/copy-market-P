@@ -9,6 +9,7 @@ jest.mock('../config/env', () => ({
         KILL_SWITCH_EQUITY_FALLBACK_LIMIT: 3,
         KILL_SWITCH_MONITOR_ERROR_LIMIT: 5,
         KILL_SWITCH_MONITOR_STALE_SECONDS: 15,
+        KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT: 100,
         TRADE_AGGREGATION_ENABLED: false,
         TRADE_AGGREGATION_WINDOW_SECONDS: 10,
     },
@@ -272,5 +273,25 @@ describe('trade executor lifecycle persistence', () => {
         expect(postOrder).not.toHaveBeenCalled();
         expect(runtime.killSwitchActive).toBe(true);
         expect(runtime.killSwitchReason).toBe('monitor_worker_not_running');
+    });
+
+    test('live mode trips the kill switch when local pending exposure exceeds free balance', async () => {
+        const firstTrade = makeTrade({ _id: 'trade-8', usdcSize: 60 });
+        const secondTrade = makeTrade({ _id: 'trade-9', usdcSize: 50, transactionHash: '0xhash-2' });
+        find.mockReturnValue({
+            exec: jest.fn().mockResolvedValue([firstTrade, secondTrade]),
+        });
+
+        const loop = tradeExecutor({} as any);
+        await waitForExecutorCycle();
+        stopTradeExecutor();
+        await loop;
+
+        const runtime = getRuntimeStatus();
+        expect(postOrder).not.toHaveBeenCalled();
+        expect(runtime.killSwitchActive).toBe(true);
+        expect(runtime.killSwitchReason).toBe('pending_buy_exposure_exceeds_free_balance');
+        expect(runtime.risk.reservedBuyExposure).toBe(110);
+        expect(runtime.risk.availableBalanceAfterPending).toBe(-10);
     });
 });

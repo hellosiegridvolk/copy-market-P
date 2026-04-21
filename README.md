@@ -20,6 +20,7 @@ This repository now contains the unpacked application source. The runtime does n
 - Preview mode and live mode
 - Local NeDB persistence for activities and tracked positions
 - Optional Polymarket market/user websocket groundwork with reconciliation fallback polling
+- Local pending-exposure accounting overlay for conservative kill-switch checks
 - Explicit persisted trade lifecycle:
   - `new`
   - `processing`
@@ -35,7 +36,7 @@ This repository now contains the unpacked application source. The runtime does n
 ## What is not yet production-grade
 
 - Websocket market and user subscriptions now exist as groundwork, but they are still best-effort visibility/reconciliation helpers rather than a full exchange-grade recovery layer
-- Kill-switch equity checks are materially better than free-USDC-only, but they still rely on API-reported position values rather than a full independent reconciliation engine
+- Kill-switch checks now include locally reserved pending buy exposure, but they still rely on API-reported position values rather than a full independent reconciliation engine
 - Local file persistence needs explicit backup and log-rotation discipline in any long-running deployment
 - Some secondary historical docs remain informational rather than fully updated operational guides
 
@@ -57,7 +58,8 @@ This repository now contains the unpacked application source. The runtime does n
 - `PREVIEW_MODE=false` enables live order posting
 - `npm run smoke:live:preflight` is the guarded read-only check to run immediately before the first live startup
 - `MARKET_WS_ENABLED`, `USER_WS_ENABLED`, and `RECONCILIATION_ENABLED` let you disable the groundwork streams if you need a polling-only validation pass
-- The status API reports the effective mode, worker heartbeats, stream/reconciliation state, queue state, last success, and last error
+- `KILL_SWITCH_PENDING_EXPOSURE_LIMIT_PCT` lets you cap locally reserved buy exposure relative to free USDC
+- The status API reports the effective mode, worker heartbeats, stream/reconciliation state, queue state, last success, last error, and local pending-exposure accounting
 - Default API/UI port is `3000` unless `PORT` is set
 
 ## Local validation flow
