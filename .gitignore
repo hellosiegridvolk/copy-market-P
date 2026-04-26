@@ -1,0 +1,46 @@
+# Environment & Secrets
+.env
+.env.txt
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# NeDB data files
+data/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+jest-test-results.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+.yarn
+simulation_results/
+trader_data_cache/
+*.tmp
+*.temp
+
+# Local artifacts not required for runtime handoff
+*.zip
